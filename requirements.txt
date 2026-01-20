@@ -1,0 +1,30 @@
+# Core ML frameworks
+torch>=2.0.0
+transformers>=4.45.0
+accelerate>=0.34.0
+
+# Vision-Language Model
+# SmolVLM is available through transformers
+
+# Atari Environment
+gymnasium[atari,accept-rom-license]>=0.29.0
+ale-py>=0.8.1
+
+# Data handling
+datasets>=2.14.0
+pillow>=10.0.0
+numpy>=1.24.0
+
+# Training utilities
+tqdm>=4.66.0
+peft>=0.7.0  # For potential LoRA experiments later
+
+# Logging and visualization
+wandb>=0.16.0
+tensorboard>=2.15.0
+
+# Configuration management
+pyyaml>=6.0.0
+
+# Utilities
+opencv-python>=4.8.0  # For advanced frame processing if needed

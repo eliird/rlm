@@ -42,7 +42,7 @@ def main():
         finetune_epochs=2,           # 2 epochs for fine-tuning
         finetune_batch_size=2,       # Batch size for fine-tuning
         finetune_lr=2e-5,            # Learning rate
-        verbose=False,               # Disable verbose to reduce output noise
+        verbose=True,               # Disable verbose to reduce output noise
         frame_skip=4,                # Repeat each action for 4 frames (4x faster!)
     )
     

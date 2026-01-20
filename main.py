@@ -65,10 +65,12 @@ class RLTrainingLoop:
         num_episodes: int = 100,
         max_steps_per_episode: int = 1000,
         reflection_sample_rate: float = 0.3,
+        positive_sample_rate: float = 1.0,
         finetune_epochs: int = 3,
         finetune_batch_size: int = 4,
         finetune_lr: float = 2e-5,
         verbose: bool = False,
+        frame_skip: int = 4,
     ):
         """
         Run one iteration of trial-reflect-finetune.
@@ -78,10 +80,12 @@ class RLTrainingLoop:
             num_episodes: Number of trial episodes
             max_steps_per_episode: Max steps per episode
             reflection_sample_rate: Fraction of poor steps to reflect on
+            positive_sample_rate: Fraction of successful steps to reflect on (for spatial learning)
             finetune_epochs: Epochs for fine-tuning
             finetune_batch_size: Batch size for fine-tuning
             finetune_lr: Learning rate for fine-tuning
             verbose: Enable verbose logging
+            frame_skip: Number of frames to repeat each action (reduces LLM calls)
 
         Returns:
             Dictionary with iteration results
@@ -96,10 +100,11 @@ class RLTrainingLoop:
         # 1. TRIAL PHASE: Run episodes with current model
         print(f"PHASE 1: Running {num_episodes} trial episodes...")
         print(f"Model: {self.current_model}")
+        print(f"Frame skip: {frame_skip} (action repeated {frame_skip}x per decision)")
         print(f"Verbose logging: {verbose}\n")
 
         agent = SmolVLMAgent(model_name=self.current_model)
-        env = PongEnvironment()
+        env = PongEnvironment(frame_skip=frame_skip)
         runner = TrialRunner(agent, env, save_dir=str(iteration_dir / "episodes"))
 
         episodes = runner.run_trials(
@@ -122,8 +127,9 @@ class RLTrainingLoop:
 
         training_examples = reflector.generate_reflections(
             episodes=episodes,
-            reward_threshold=0.0,  # Reflect on all non-positive rewards
-            sample_rate=reflection_sample_rate,
+            reward_threshold=0.0,  # Threshold for negative examples
+            sample_rate=reflection_sample_rate,  # Sample rate for negative/neutral
+            positive_sample_rate=positive_sample_rate,  # Sample rate for positive (scores)
         )
 
         # Save reflection statistics

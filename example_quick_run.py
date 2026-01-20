@@ -28,16 +28,32 @@ def main():
     )
 
     # Run with settings to see improvement over iterations
+    # loop.run_training_loop(
+    #     num_iterations=3,            # 3 iterations to see progression
+    #     episodes_per_iteration=10,   # 10 episodes per iteration (enough for statistics)
+    #     max_steps_per_episode=500,   # Longer episodes (typical Pong game)
+    #     reflection_sample_rate=0.3,  # Reflect on 30% of poor actions
+    #     finetune_epochs=2,           # 2 epochs for fine-tuning
+    #     finetune_batch_size=4,       # Batch size for fine-tuning
+    #     finetune_lr=2e-5,            # Learning rate
+    #     verbose=True,               # Disable verbose to reduce output noise
+    #     frame_skip=4,                # Repeat each action for 4 frames (4x faster!)
+    # )
+    
+    # Test Config
     loop.run_training_loop(
-        num_iterations=3,            # 3 iterations to see progression
-        episodes_per_iteration=10,   # 10 episodes per iteration (enough for statistics)
-        max_steps_per_episode=500,   # Longer episodes (typical Pong game)
+        num_iterations=2,            # 2 iterations to see progression
+        episodes_per_iteration=1,    # 1 episode for quick testing
+        max_steps_per_episode=20,    # Short episodes for testing
         reflection_sample_rate=0.3,  # Reflect on 30% of poor actions
+        positive_sample_rate=1.0,    # Reflect on ALL successful actions (spatial learning!)
         finetune_epochs=2,           # 2 epochs for fine-tuning
-        finetune_batch_size=4,       # Batch size for fine-tuning
+        finetune_batch_size=2,       # Batch size for fine-tuning
         finetune_lr=2e-5,            # Learning rate
-        verbose=False,               # Disable verbose to reduce output noise
+        verbose=True,                # Enable verbose to see progress
+        frame_skip=4,                # Repeat each action for 4 frames (4x faster!)
     )
+    
 
     print("\n" + "="*80)
     print("Quick example complete!")

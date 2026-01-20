@@ -4,11 +4,27 @@ Analyzes episodes and creates corrected training examples.
 """
 
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 from pathlib import Path
 from tqdm import tqdm
+from PIL import Image
 
 from ..models.smolvlm_agent import SmolVLMAgent
+
+
+def load_frame(frame_ref: Union[str, Image.Image]) -> Image.Image:
+    """
+    Load a frame from disk if it's a path, otherwise return as-is.
+
+    Args:
+        frame_ref: Either a file path (str) or PIL Image
+
+    Returns:
+        PIL Image
+    """
+    if isinstance(frame_ref, str):
+        return Image.open(frame_ref)
+    return frame_ref
 
 
 class ReflectionGenerator:
@@ -31,19 +47,24 @@ class ReflectionGenerator:
         episodes: List[Any],
         reward_threshold: float = 0.0,
         sample_rate: float = 1.0,
+        positive_sample_rate: float = 1.0,
     ) -> List[Dict[str, Any]]:
         """
-        Generate reflections for episodes where agent could improve.
+        Generate reflections for both successful and unsuccessful actions.
 
         Args:
             episodes: List of Episode objects from trial runner
-            reward_threshold: Only reflect on steps with reward <= this threshold
-            sample_rate: Fraction of eligible steps to reflect on (0.0 to 1.0)
+            reward_threshold: Threshold for negative examples (reflect on reward <= this)
+            sample_rate: Fraction of negative/neutral steps to reflect on (0.0 to 1.0)
+            positive_sample_rate: Fraction of positive steps to reflect on (0.0 to 1.0)
+                                 Use 1.0 initially for spatial learning, can reduce later
 
         Returns:
             List of training examples with corrected actions
         """
         print(f"\nGenerating reflections from {len(episodes)} episodes...")
+        print(f"  Negative/neutral sample rate: {sample_rate:.1%}")
+        print(f"  Positive sample rate: {positive_sample_rate:.1%}")
 
         training_examples = []
 
@@ -55,43 +76,65 @@ class ReflectionGenerator:
 
                 reward = step_data['reward']
 
-                # Only reflect on poor outcomes or neutral ones
-                if reward <= reward_threshold:
-                    # Sample based on rate
-                    import random
-                    if random.random() > sample_rate:
-                        continue
+                # Determine if we should reflect on this step
+                import random
+                should_reflect = False
 
-                    # Generate reflection
-                    try:
-                        reflection = self.agent.get_reflection(
-                            frame=step_data['frame'],
-                            action_taken=step_data['action'],
-                            reasoning=step_data['reasoning'],
-                            reward=reward,
-                            next_frame=step_data['next_frame'],
-                        )
+                if reward > reward_threshold:
+                    # Positive reward - helps model learn spatial awareness
+                    if random.random() <= positive_sample_rate:
+                        should_reflect = True
+                else:
+                    # Negative or neutral - learn from mistakes
+                    if random.random() <= sample_rate:
+                        should_reflect = True
 
-                        # Create training example
-                        training_example = {
-                            'frame': step_data['frame'],
-                            'original_action': step_data['action'],
-                            'original_reasoning': step_data['reasoning'],
-                            'reward': reward,
-                            'reflection_analysis': reflection['analysis'],
-                            'corrected_action': reflection['correct_action'],
-                            'corrected_reasoning': reflection['correct_reasoning'],
-                            'episode_id': episode.episode_id,
-                            'step': step_data['step'],
-                        }
+                if not should_reflect:
+                    continue
 
-                        training_examples.append(training_example)
+                # Generate reflection
+                try:
+                    # Load frames from disk if they are stored as paths
+                    frame = load_frame(step_data['frame'])
+                    next_frame = load_frame(step_data['next_frame'])
 
-                    except Exception as e:
-                        print(f"Warning: Reflection failed for episode {episode.episode_id}, step {step_data['step']}: {e}")
-                        continue
+                    reflection = self.agent.get_reflection(
+                        frame=frame,
+                        action_taken=step_data['action'],
+                        reasoning=step_data['reasoning'],
+                        reward=reward,
+                        next_frame=next_frame,
+                    )
+
+                    # Create training example
+                    # Keep frame reference (path or image) for later use
+                    training_example = {
+                        'frame': step_data['frame'],  # This will be a path if saving to disk
+                        'original_action': step_data['action'],
+                        'original_reasoning': step_data['reasoning'],
+                        'reward': reward,
+                        'reflection_analysis': reflection['analysis'],
+                        'corrected_action': reflection['correct_action'],
+                        'corrected_reasoning': reflection['correct_reasoning'],
+                        'episode_id': episode.episode_id,
+                        'step': step_data['step'],
+                        'is_positive': reward > 0,  # Track if this was a successful action
+                    }
+
+                    training_examples.append(training_example)
+
+                except Exception as e:
+                    print(f"Warning: Reflection failed for episode {episode.episode_id}, step {step_data['step']}: {e}")
+                    continue
+
+        # Summary statistics
+        num_positive = sum(1 for ex in training_examples if ex.get('is_positive', False))
+        num_negative = len(training_examples) - num_positive
 
         print(f"✓ Generated {len(training_examples)} reflection-based training examples")
+        print(f"  Positive examples (reward > 0): {num_positive}")
+        print(f"  Negative/neutral examples: {num_negative}")
+
         return training_examples
 
     def save_training_data(
@@ -108,10 +151,14 @@ class ReflectionGenerator:
         """
         output_path = self.output_dir / filename
 
-        # Convert to JSON-serializable format (exclude PIL images)
+        # Convert to JSON-serializable format
         serializable_data = []
         for example in training_examples:
+            # Handle frame reference (might be a path string or PIL image)
+            frame_info = example['frame'] if isinstance(example['frame'], str) else 'in_memory'
+
             serializable_data.append({
+                'frame_path': frame_info,
                 'original_action': example['original_action'],
                 'original_reasoning': example['original_reasoning'],
                 'reward': example['reward'],
@@ -150,9 +197,12 @@ class ReflectionGenerator:
         finetuning_data = []
 
         for example in training_examples:
+            # Load frame from disk if it's a path
+            frame = load_frame(example['frame'])
+
             # Format as chat conversation for fine-tuning
             finetuning_example = {
-                'image': example['frame'],  # PIL Image
+                'image': frame,  # PIL Image (loaded from disk if needed)
                 'messages': [
                     {
                         'role': 'user',

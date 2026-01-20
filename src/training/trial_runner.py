@@ -18,11 +18,16 @@ from ..models.smolvlm_agent import SmolVLMAgent
 class Episode:
     """Stores data for a single episode."""
 
-    def __init__(self, episode_id: int):
+    def __init__(self, episode_id: int, frames_dir: Path = None):
         self.episode_id = episode_id
         self.steps: List[Dict[str, Any]] = []
         self.total_reward = 0.0
         self.duration = 0
+        self.frames_dir = frames_dir
+
+        # Create frames directory if specified
+        if self.frames_dir:
+            self.frames_dir.mkdir(parents=True, exist_ok=True)
 
     def add_step(
         self,
@@ -35,14 +40,30 @@ class Episode:
         done: bool,
         raw_output: str = "",
     ):
-        """Add a step to the episode."""
+        """Add a step to the episode, saving frames to disk."""
+        # Save frames to disk if frames_dir is set
+        if self.frames_dir:
+            frame_path = self.frames_dir / f"ep{self.episode_id}_step{step_num}_frame.png"
+            next_frame_path = self.frames_dir / f"ep{self.episode_id}_step{step_num}_next.png"
+
+            frame.save(frame_path)
+            next_frame.save(next_frame_path)
+
+            # Store only the file paths, not the images
+            frame_ref = str(frame_path)
+            next_frame_ref = str(next_frame_path)
+        else:
+            # Keep images in memory (legacy behavior)
+            frame_ref = frame
+            next_frame_ref = next_frame
+
         self.steps.append({
             'step': step_num,
-            'frame': frame,  # We'll save these separately
+            'frame': frame_ref,
             'action': action,
             'reasoning': reasoning,
             'reward': reward,
-            'next_frame': next_frame,
+            'next_frame': next_frame_ref,
             'done': done,
             'raw_output': raw_output,
         })
@@ -77,6 +98,7 @@ class TrialRunner:
         agent: SmolVLMAgent,
         env: PongEnvironment,
         save_dir: str = "data/episodes",
+        save_frames_to_disk: bool = True,
     ):
         """
         Initialize trial runner.
@@ -85,11 +107,20 @@ class TrialRunner:
             agent: SmolVLM agent
             env: Pong environment
             save_dir: Directory to save episode data
+            save_frames_to_disk: If True, save frames to disk instead of keeping in RAM
         """
         self.agent = agent
         self.env = env
         self.save_dir = Path(save_dir)
         self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.save_frames_to_disk = save_frames_to_disk
+
+        # Create frames directory if saving to disk
+        if self.save_frames_to_disk:
+            self.frames_dir = self.save_dir / "frames"
+            self.frames_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            self.frames_dir = None
 
         self.episodes: List[Episode] = []
 
@@ -114,7 +145,7 @@ class TrialRunner:
         Returns:
             Episode object with all collected data
         """
-        episode = Episode(episode_id)
+        episode = Episode(episode_id, frames_dir=self.frames_dir)
 
         # Reset environment
         frame, info = self.env.reset()

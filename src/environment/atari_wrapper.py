@@ -28,14 +28,18 @@ class PongEnvironment:
 
     ACTION_NAMES = {v: k for k, v in ACTIONS.items()}
 
-    def __init__(self, render_mode: str = None):
+    def __init__(self, render_mode: str = None, frame_skip: int = 1):
         """
         Initialize Pong environment.
 
         Args:
             render_mode: 'human' for visualization, 'rgb_array' for frame capture, None for headless
+            frame_skip: Number of frames to repeat each action (default: 1 = no skip)
+                       Higher values reduce LLM calls but may miss fast-changing game states
+                       Recommended: 4-8 for Pong (60 FPS game, so 4 = ~15 decisions/sec)
         """
         self.env = gym.make('ALE/Pong-v5', render_mode=render_mode)
+        self.frame_skip = max(1, frame_skip)  # Ensure at least 1
         self.current_step = 0
         self.episode_reward = 0
         self.done = False
@@ -58,31 +62,45 @@ class PongEnvironment:
 
     def step(self, action: str) -> Tuple[Image.Image, float, bool, bool, Dict[str, Any]]:
         """
-        Execute action in environment.
+        Execute action in environment, repeating it for frame_skip steps.
 
         Args:
-            action: Action name ('NOOP', 'UP', 'DOWN')
+            action: Action name ('NOOP', 'FIRE', 'RIGHT', 'LEFT', etc.)
 
         Returns:
-            frame: PIL Image of resulting frame
-            reward: Reward received
+            frame: PIL Image of resulting frame (after frame_skip repetitions)
+            reward: Total reward accumulated across all skipped frames
             terminated: Whether episode ended (game over)
             truncated: Whether episode was truncated (time limit)
-            info: Additional environment info
+            info: Additional environment info from last step
         """
         if action not in self.ACTIONS:
             raise ValueError(f"Invalid action '{action}'. Must be one of {list(self.ACTIONS.keys())}")
 
         action_id = self.ACTIONS[action]
-        obs, reward, terminated, truncated, info = self.env.step(action_id)
+        total_reward = 0.0
+        terminated = False
+        truncated = False
+        info: Dict[str, Any] = {}
 
-        self.current_step += 1
-        self.episode_reward += reward
+        # Execute the same action for frame_skip steps
+        for _ in range(self.frame_skip):
+            obs, reward, terminated, truncated, info = self.env.step(action_id)
+            total_reward += float(reward)
+
+            self.current_step += 1
+
+            # Stop early if episode ends
+            if terminated or truncated:
+                break
+
+        self.episode_reward += total_reward
         self.done = terminated or truncated
 
-        frame = self._preprocess_frame(obs)
+        # obs is guaranteed to be set after at least one loop iteration
+        frame = self._preprocess_frame(obs)  # type: ignore
 
-        return frame, reward, terminated, truncated, info
+        return frame, total_reward, terminated, truncated, info
 
     def _preprocess_frame(self, obs: np.ndarray) -> Image.Image:
         """

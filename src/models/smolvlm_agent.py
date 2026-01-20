@@ -57,43 +57,29 @@ class SmolVLMAgent:
         self.model.eval()
 
         print("✓ Model loaded successfully")
+        print("\nNote: The base model may not play well initially.")
+        print("It will learn through the trial-reflect-finetune loop.")
 
-        # System prompt for Pong game
-        self.system_prompt = """You are an AI agent playing the game Pong.
+        # System prompt for Pong game with concrete examples
+        self.system_prompt = """You are playing Pong. Your paddle is on the RIGHT side of the screen.
 
-Game Rules:
-- You control a paddle on the right side of the screen
-- Your goal is to hit the ball back to the opponent
-- If the ball passes your paddle, the opponent scores (+1 for them, -1 for you)
-- If the ball passes the opponent's paddle, you score (+1 for you)
-- Move your paddle to intercept the ball
+ACTIONS: NOOP, FIRE, RIGHT, LEFT, RIGHTFIRE, LEFTFIRE
 
-Available Actions:
-- NOOP: Do nothing
-- FIRE: Start the game / serve the ball
-- RIGHT: Move paddle right/up
-- LEFT: Move paddle left/down
-- RIGHTFIRE: Move right and fire
-- LEFTFIRE: Move left and fire
+Analyze the image and respond with JSON only.
 
-You MUST respond with valid JSON in this exact format:
-{
-  "reasoning": "brief explanation of why you're taking this action",
-  "action": "ACTION_NAME"
-}
+Examples:
+- If ball is in upper area: {"reasoning": "Ball is high, moving paddle up", "action": "RIGHT"}
+- If ball is in lower area: {"reasoning": "Ball is low, moving paddle down", "action": "LEFT"}
+- If game not started: {"reasoning": "Starting game", "action": "FIRE"}
 
-Example response:
-{
-  "reasoning": "The ball is moving towards the upper right, I need to move my paddle up to intercept it",
-  "action": "RIGHT"
-}"""
+Your turn - analyze the image and respond with JSON:"""
 
     def get_action(
         self,
         frame: Image.Image,
         game_context: Optional[str] = None,
         temperature: float = 0.7,
-        max_new_tokens: int = 150,
+        max_new_tokens: int = 100,
     ) -> Tuple[str, str, str]:
         """
         Get action decision from the model given a game frame.
@@ -107,10 +93,8 @@ Example response:
         Returns:
             Tuple of (action, reasoning, raw_output)
         """
-        # Build prompt
-        user_message = "What action should you take in this Pong game frame?"
-        if game_context:
-            user_message += f"\n\nContext: {game_context}"
+        # Build prompt - be very direct
+        user_message = f"{self.system_prompt}\n\nAnalyze this Pong game frame and choose your action. Respond with JSON only."
 
         # Create messages in chat format
         messages = [
@@ -118,7 +102,7 @@ Example response:
                 "role": "user",
                 "content": [
                     {"type": "image"},
-                    {"type": "text", "text": f"{self.system_prompt}\n\n{user_message}"}
+                    {"type": "text", "text": user_message}
                 ]
             }
         ]

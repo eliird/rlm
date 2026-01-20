@@ -99,6 +99,7 @@ class TrialRunner:
         max_steps: int = 1000,
         temperature: float = 0.7,
         render: bool = False,
+        verbose: bool = False,
     ) -> Episode:
         """
         Run a single episode.
@@ -108,6 +109,7 @@ class TrialRunner:
             max_steps: Maximum steps per episode
             temperature: Sampling temperature for agent
             render: Whether to render the environment
+            verbose: Print detailed step information
 
         Returns:
             Episode object with all collected data
@@ -117,17 +119,29 @@ class TrialRunner:
         # Reset environment
         frame, info = self.env.reset()
 
+        if verbose:
+            print(f"\n  Starting Episode {episode_id}")
+
         for step in range(max_steps):
-            # Get action from agent
+            # Get action from agent (LLM inference - this is the slow part)
+            if verbose and step % 10 == 0:
+                print(f"    Step {step}: Getting action from LLM...")
+
             action, reasoning, raw_output = self.agent.get_action(
                 frame,
                 game_context=f"Step {step}",
                 temperature=temperature,
             )
 
+            if verbose and step % 10 == 0:
+                print(f"    Step {step}: Action={action}, Reasoning={reasoning[:50]}...")
+
             # Execute action
             next_frame, reward, terminated, truncated, info = self.env.step(action)
             done = terminated or truncated
+
+            if verbose and reward != 0:
+                print(f"    Step {step}: REWARD={reward}!")
 
             # Record step
             episode.add_step(
@@ -145,7 +159,12 @@ class TrialRunner:
             frame = next_frame
 
             if done:
+                if verbose:
+                    print(f"  Episode {episode_id} finished at step {step}. Total reward: {episode.total_reward}")
                 break
+
+        if verbose and not done:
+            print(f"  Episode {episode_id} reached max steps ({max_steps}). Total reward: {episode.total_reward}")
 
         return episode
 
@@ -156,6 +175,7 @@ class TrialRunner:
         temperature: float = 0.7,
         save_frequency: int = 10,
         trial_name: str = None,
+        verbose: bool = False,
     ) -> List[Episode]:
         """
         Run multiple trial episodes.
@@ -166,6 +186,7 @@ class TrialRunner:
             temperature: Sampling temperature
             save_frequency: Save data every N episodes
             trial_name: Name for this trial batch (defaults to timestamp)
+            verbose: Enable verbose logging for each episode
 
         Returns:
             List of Episode objects
@@ -176,6 +197,7 @@ class TrialRunner:
         print(f"\n{'='*60}")
         print(f"Running {num_episodes} trial episodes")
         print(f"Trial name: {trial_name}")
+        print(f"Max steps per episode: {max_steps_per_episode}")
         print(f"{'='*60}\n")
 
         episodes = []
@@ -184,11 +206,20 @@ class TrialRunner:
             'durations': [],
         }
 
-        for ep_num in tqdm(range(num_episodes), desc="Episodes"):
+        # Use tqdm only if not verbose (to avoid clutter)
+        episode_iterator = range(num_episodes) if verbose else tqdm(range(num_episodes), desc="Episodes")
+
+        for ep_num in episode_iterator:
+            if verbose:
+                print(f"\n{'─'*60}")
+                print(f"Episode {ep_num + 1}/{num_episodes}")
+                print(f"{'─'*60}")
+
             episode = self.run_episode(
                 episode_id=ep_num,
                 max_steps=max_steps_per_episode,
                 temperature=temperature,
+                verbose=verbose,
             )
 
             episodes.append(episode)

@@ -8,6 +8,10 @@ import numpy as np
 from PIL import Image
 from typing import Tuple, Dict, Any
 
+# Register ALE environments with gymnasium
+import ale_py
+gym.register_envs(ale_py)
+
 
 class PongEnvironment:
     """Wrapper for Atari Pong environment with vision model-friendly preprocessing."""

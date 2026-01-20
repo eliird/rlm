@@ -28,9 +28,9 @@ def main():
 
     # Run with minimal settings for quick testing
     loop.run_training_loop(
-        num_iterations=2,           # Just 2 iterations
-        episodes_per_iteration=5,   # Only 5 episodes per iteration (faster testing)
-        max_steps_per_episode=100,  # Much shorter episodes for testing
+        num_iterations=1,           # Just 2 iterations
+        episodes_per_iteration=1,   # Only 5 episodes per iteration (faster testing)
+        max_steps_per_episode=20,  # Much shorter episodes for testing
         reflection_sample_rate=0.5, # Sample more for small dataset
         finetune_epochs=1,          # Just 1 epoch for testing
         finetune_batch_size=2,      # Smaller batch

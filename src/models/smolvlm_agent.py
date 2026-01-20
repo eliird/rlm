@@ -121,9 +121,12 @@ Your turn - analyze the image and respond with JSON:"""
                 do_sample=True,
             )
 
-        # Decode output
+        # Decode only the newly generated tokens (not the input prompt)
+        input_length = inputs['input_ids'].shape[1]
+        new_tokens = generated_ids[:, input_length:]
+
         generated_texts = self.processor.batch_decode(
-            generated_ids,
+            new_tokens,
             skip_special_tokens=True,
         )
 
@@ -198,36 +201,38 @@ Your turn - analyze the image and respond with JSON:"""
         Returns:
             Prompt for self-reflection
         """
-        # Create a more explicit prompt without placeholder examples
+        # Create reward-specific guidance
+        if reward < 0:
+            guidance = "You LOST a point! The ball got past your paddle. What went wrong?"
+        elif reward > 0:
+            guidance = "You SCORED a point! This was good. What made it work?"
+        else:
+            guidance = "No score change. Track the ball position - where is it and where should your paddle be?"
+
         valid_actions = ["NOOP", "FIRE", "RIGHT", "LEFT", "RIGHTFIRE", "LEFTFIRE"]
 
-        prompt = f"""You are analyzing your Pong gameplay to learn from mistakes.
+        prompt = f"""Analyze this Pong game. {guidance}
 
-What happened:
-- You took action: {action_taken}
-- Your reasoning was: {reasoning}
-- Result: reward = {reward}
+Previous action: {action_taken}
+Previous reasoning: {reasoning}
+Result: Reward {reward}
 
-Reward meaning:
-+1 = you scored (good!)
--1 = opponent scored (bad - you missed the ball)
-0 = game continues (neutral)
+Your paddle is on the RIGHT side of the screen.
+- RIGHT = move paddle UP
+- LEFT = move paddle DOWN
+- FIRE = start game
+- NOOP = do nothing
 
-Look at BOTH images shown (before and after your action).
+Look at both images. Where is the ball? Where is your paddle? What should you do?
 
-Task: Choose the BEST action from this list: {', '.join(valid_actions)}
-
-Respond with JSON only (no other text):
+Respond with JSON only:
 {{
-  "analysis": "what you see in the images and why the outcome happened",
-  "correct_action": "ONE_OF_THE_VALID_ACTIONS_FROM_THE_LIST",
-  "correct_reasoning": "why this specific action would work better"
+  "analysis": "Describe the ball and paddle positions you see",
+  "correct_action": "Choose: RIGHT, LEFT, FIRE, NOOP, RIGHTFIRE, or LEFTFIRE",
+  "correct_reasoning": "Explain why this move is best"
 }}
 
-Remember:
-- correct_action must be EXACTLY one of: {', '.join(valid_actions)}
-- Look at ball position and paddle position
-- Choose RIGHT to move up, LEFT to move down"""
+Your correct_action MUST be one word: RIGHT, LEFT, FIRE, NOOP, RIGHTFIRE, or LEFTFIRE"""
 
         return prompt
 
@@ -288,8 +293,12 @@ Remember:
                 do_sample=True,
             )
 
+        # Decode only the newly generated tokens (not the input prompt)
+        input_length = inputs['input_ids'].shape[1]
+        new_tokens = generated_ids[:, input_length:]
+
         generated_texts = self.processor.batch_decode(
-            generated_ids,
+            new_tokens,
             skip_special_tokens=True,
         )
 
@@ -324,8 +333,11 @@ Remember:
 
                     # If still invalid, use a random action (not NOOP to encourage exploration)
                     if not found:
+                        original_action = data.get('correct_action', 'NONE')
                         correct_action = random.choice(["FIRE", "RIGHT", "LEFT"])
-                        print(f"  Warning: Invalid reflection action, using random: {correct_action}")
+                        print(f"  Warning: Invalid reflection action '{original_action}', using random: {correct_action}")
+                        if len(output) < 500:
+                            print(f"  Raw output: {output}")
 
                 return {
                     'analysis': data.get('analysis', 'No analysis'),

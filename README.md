@@ -290,7 +290,7 @@ If you use this code in your research, please cite:
   title = {LLM-Based Reinforcement Learning for Atari Pong},
   author = {Your Name},
   year = {2025},
-  url = {https://github.com/yourusername/reinforcement_experiments}
+  url = {https://github.com/eliird/rlm}
 }
 ```
 

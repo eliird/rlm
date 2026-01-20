@@ -15,10 +15,13 @@ def main():
     print("\n" + "="*80)
     print("QUICK EXAMPLE RUN - Qwen2-VL-2B-Instruct")
     print("="*80)
-    print("This will run 3 iterations with 10 episodes each.")
+    print("This will run 3 iterations with ADAPTIVE episode counts:")
+    print("  - Iteration 1: 2 episodes  (quick bootstrap with random policy)")
+    print("  - Iteration 2: 4 episodes  (policy improving, gather more data)")
+    print("  - Iteration 3: 8 episodes  (refined policy, more episodes for stats)")
     print("Using Qwen2-VL for better vision understanding.")
     print("Each episode runs up to 500 steps (~1-2 mins per episode).")
-    print("Total estimated time: 30-60 minutes.")
+    print("Total estimated time: 15-30 minutes.")
     print("="*80 + "\n")
 
     # Create training loop with Qwen2-VL (better vision understanding)
@@ -30,14 +33,16 @@ def main():
     # Run with settings to see improvement over iterations
     loop.run_training_loop(
         num_iterations=3,            # 3 iterations to see progression
-        episodes_per_iteration=10,   # 10 episodes per iteration (enough for statistics)
+        episodes_per_iteration=16,   # Max episodes (used as cap for adaptive mode)
+        adaptive_episodes=True,      # Start small: 2, 4, 8 episodes
+        initial_episodes=2,          # Start with just 2 episodes in iteration 1
         max_steps_per_episode=500,   # Longer episodes (typical Pong game)
         reflection_sample_rate=0.3,  # Reflect on 30% of poor actions
-        positive_sample_rate=1.0,    # Reflect on all positive actions
+        positive_sample_rate=1.0,    # Reflect on ALL positive actions (spatial learning!)
         finetune_epochs=2,           # 2 epochs for fine-tuning
         finetune_batch_size=2,       # Batch size for fine-tuning
         finetune_lr=2e-5,            # Learning rate
-        verbose=True,               # Disable verbose to reduce output noise
+        verbose=False,               # Disable verbose to reduce output noise
         frame_skip=4,                # Repeat each action for 4 frames (4x faster!)
     )
     

@@ -101,6 +101,8 @@ class RLTrainingLoop:
         print(f"PHASE 1: Running {num_episodes} trial episodes...")
         print(f"Model: {self.current_model}")
         print(f"Frame skip: {frame_skip} (action repeated {frame_skip}x per decision)")
+        if iteration == 1:
+            print(f"Note: Early iteration - training frequently with fewer episodes")
         print(f"Verbose logging: {verbose}\n")
 
         agent = SmolVLMAgent(model_name=self.current_model)
@@ -194,6 +196,8 @@ class RLTrainingLoop:
         self,
         num_iterations: int = 5,
         episodes_per_iteration: int = 100,
+        adaptive_episodes: bool = False,
+        initial_episodes: int = 2,
         **kwargs
     ):
         """
@@ -201,20 +205,33 @@ class RLTrainingLoop:
 
         Args:
             num_iterations: Number of trial-reflect-finetune iterations
-            episodes_per_iteration: Episodes per iteration
+            episodes_per_iteration: Episodes per iteration (used if adaptive_episodes=False)
+            adaptive_episodes: If True, start with fewer episodes and increase over time
+            initial_episodes: Starting number of episodes (when adaptive_episodes=True)
             **kwargs: Additional arguments passed to run_iteration
         """
         print(f"\n{'='*80}")
         print(f"Starting Training Loop")
         print(f"{'='*80}")
         print(f"Iterations: {num_iterations}")
-        print(f"Episodes per iteration: {episodes_per_iteration}")
+        if adaptive_episodes:
+            print(f"Adaptive episodes: Starting with {initial_episodes}, doubling each iteration")
+        else:
+            print(f"Episodes per iteration: {episodes_per_iteration}")
         print(f"{'='*80}\n")
 
         for iteration in range(1, num_iterations + 1):
+            # Calculate episodes for this iteration
+            if adaptive_episodes:
+                # Start small, double each iteration: 2, 4, 8, 16, ...
+                # Cap at episodes_per_iteration
+                num_episodes = min(initial_episodes * (2 ** (iteration - 1)), episodes_per_iteration)
+            else:
+                num_episodes = episodes_per_iteration
+
             self.run_iteration(
                 iteration=iteration,
-                num_episodes=episodes_per_iteration,
+                num_episodes=num_episodes,
                 **kwargs
             )
 

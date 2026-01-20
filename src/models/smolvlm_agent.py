@@ -198,29 +198,36 @@ Your turn - analyze the image and respond with JSON:"""
         Returns:
             Prompt for self-reflection
         """
-        prompt = f"""You just played Pong and took an action. Here's what happened:
+        # Create a more explicit prompt without placeholder examples
+        valid_actions = ["NOOP", "FIRE", "RIGHT", "LEFT", "RIGHTFIRE", "LEFTFIRE"]
 
-Your Action: {action_taken}
-Your Reasoning: {reasoning}
-Reward Received: {reward}
+        prompt = f"""You are analyzing your Pong gameplay to learn from mistakes.
 
-The reward shows:
-- Positive reward (+1): You scored! Good job.
-- Negative reward (-1): Opponent scored. You missed the ball.
-- Zero reward (0): Game continues, no score yet.
+What happened:
+- You took action: {action_taken}
+- Your reasoning was: {reasoning}
+- Result: reward = {reward}
 
-Looking at the ORIGINAL frame (before your action) and the RESULT frame (after your action), analyze:
+Reward meaning:
++1 = you scored (good!)
+-1 = opponent scored (bad - you missed the ball)
+0 = game continues (neutral)
 
-1. Was your action correct? Why or why not?
-2. What should you have done instead to maximize reward?
-3. What patterns in the ball movement and paddle position should you watch for?
+Look at BOTH images shown (before and after your action).
 
-Provide your analysis and the CORRECT action you should have taken in JSON format:
+Task: Choose the BEST action from this list: {', '.join(valid_actions)}
+
+Respond with JSON only (no other text):
 {{
-  "analysis": "detailed analysis of what happened and why",
-  "correct_action": "BEST_ACTION",
-  "correct_reasoning": "why this action would have been better"
-}}"""
+  "analysis": "what you see in the images and why the outcome happened",
+  "correct_action": "ONE_OF_THE_VALID_ACTIONS_FROM_THE_LIST",
+  "correct_reasoning": "why this specific action would work better"
+}}
+
+Remember:
+- correct_action must be EXACTLY one of: {', '.join(valid_actions)}
+- Look at ball position and paddle position
+- Choose RIGHT to move up, LEFT to move down"""
 
         return prompt
 
@@ -293,25 +300,46 @@ Provide your analysis and the CORRECT action you should have taken in JSON forma
 
     def _parse_reflection(self, output: str) -> Dict[str, str]:
         """Parse reflection output."""
+        import random
+        valid_actions = ["NOOP", "FIRE", "RIGHT", "LEFT", "RIGHTFIRE", "LEFTFIRE"]
+
         json_match = re.search(r'\{[^}]+\}', output, re.DOTALL)
 
         if json_match:
             try:
                 json_str = json_match.group(0)
                 data = json.loads(json_str)
+
+                correct_action = data.get('correct_action', 'NOOP').upper().strip()
+
+                # Validate and fix invalid actions
+                if correct_action not in valid_actions:
+                    # Check if it contains a valid action
+                    found = False
+                    for action in valid_actions:
+                        if action in correct_action:
+                            correct_action = action
+                            found = True
+                            break
+
+                    # If still invalid, use a random action (not NOOP to encourage exploration)
+                    if not found:
+                        correct_action = random.choice(["FIRE", "RIGHT", "LEFT"])
+                        print(f"  Warning: Invalid reflection action, using random: {correct_action}")
+
                 return {
                     'analysis': data.get('analysis', 'No analysis'),
-                    'correct_action': data.get('correct_action', 'NOOP').upper(),
+                    'correct_action': correct_action,
                     'correct_reasoning': data.get('correct_reasoning', 'No reasoning')
                 }
             except json.JSONDecodeError:
                 pass
 
-        # Fallback
+        # Fallback - use random action to encourage diversity
         return {
             'analysis': output[:200],
-            'correct_action': 'NOOP',
-            'correct_reasoning': 'Failed to parse reflection'
+            'correct_action': random.choice(["FIRE", "RIGHT", "LEFT"]),
+            'correct_reasoning': 'Failed to parse reflection - using random action'
         }
 
 

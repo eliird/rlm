@@ -29,7 +29,7 @@ class RLTrainingLoop:
 
     def __init__(
         self,
-        model_name: str = "HuggingFaceTB/SmolVLM-Instruct",
+        model_name: str = "Qwen/Qwen2-VL-2B-Instruct",
         output_dir: str = "data/experiments",
         experiment_name: str = None,
     ):

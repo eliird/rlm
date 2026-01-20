@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
-Test SmolVLM's vision understanding of Pong frames.
+Test vision-language model's understanding of Pong frames.
 This will help us understand if the model can actually see and interpret the game.
 
 Usage:
     .venv/bin/python test_vision_understanding.py
+    .venv/bin/python test_vision_understanding.py --model Qwen/Qwen2-VL-2B-Instruct
+    .venv/bin/python test_vision_understanding.py --model HuggingFaceTB/SmolVLM-Instruct
 """
 
 import os
 import sys
+import argparse
 from pathlib import Path
 
 # Set HuggingFace cache BEFORE any imports
@@ -25,16 +28,17 @@ from src.environment.atari_wrapper import PongEnvironment
 from src.models.smolvlm_agent import SmolVLMAgent
 
 
-def test_vision_understanding():
+def test_vision_understanding(model_name: str = "Qwen/Qwen2-VL-2B-Instruct"):
     """Test if model can understand Pong game frames."""
     print("=" * 70)
-    print("Testing SmolVLM's Vision Understanding of Pong")
+    print(f"Testing Vision Understanding of Pong")
+    print(f"Model: {model_name}")
     print("=" * 70)
 
     # Initialize environment and agent
     print("\n1. Initializing environment and agent...")
     env = PongEnvironment()
-    agent = SmolVLMAgent()
+    agent = SmolVLMAgent(model_name=model_name)
 
     # Get a frame
     frame, _ = env.reset()
@@ -108,4 +112,13 @@ def test_vision_understanding():
 
 
 if __name__ == "__main__":
-    test_vision_understanding()
+    parser = argparse.ArgumentParser(description="Test vision model's understanding of Pong")
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="Qwen/Qwen2-VL-2B-Instruct",
+        help="HuggingFace model name (default: Qwen/Qwen2-VL-2B-Instruct)"
+    )
+
+    args = parser.parse_args()
+    test_vision_understanding(model_name=args.model)

@@ -15,6 +15,7 @@ from transformers import (
     AutoModelForVision2Seq,
     TrainingArguments,
     Trainer,
+    DataCollatorForSeq2Seq,
 )
 from datasets import Dataset
 import json
@@ -47,18 +48,20 @@ class PongDataset(torch.utils.data.Dataset):
         # Apply chat template
         text = self.processor.apply_chat_template(messages, add_generation_prompt=False)
 
-        # Process inputs
+        # Process inputs - don't truncate to avoid breaking image tokens
         inputs = self.processor(
             text=text,
             images=[image],
             return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-            max_length=512,
+            padding=False,  # Don't pad to max length
+            truncation=False,  # Don't truncate - preserves image tokens
         )
 
         # Squeeze batch dimension
         inputs = {k: v.squeeze(0) for k, v in inputs.items()}
+
+        # Add labels for training (same as input_ids for causal LM)
+        inputs["labels"] = inputs["input_ids"].clone()
 
         return inputs
 
@@ -193,11 +196,20 @@ class SmolVLMFinetuner:
             logging_dir=str(output_path / "logs"),
         )
 
+        # Create data collator for variable-length sequences
+        data_collator = DataCollatorForSeq2Seq(
+            tokenizer=processor.tokenizer,
+            model=model,
+            padding=True,
+            pad_to_multiple_of=8,  # For efficiency on GPU
+        )
+
         # Create trainer
         trainer = Trainer(
             model=model,
             args=training_args,
             train_dataset=train_dataset,
+            data_collator=data_collator,
             tokenizer=processor.tokenizer,
         )
 

@@ -13,16 +13,17 @@ from main import RLTrainingLoop
 def main():
     """Run a quick example training loop."""
     print("\n" + "="*80)
-    print("QUICK EXAMPLE RUN")
+    print("QUICK EXAMPLE RUN - Qwen2-VL-2B-Instruct")
     print("="*80)
-    print("This will run 2 iterations with 10 episodes each.")
+    print("This will run 2 iterations with 5 episodes each.")
+    print("Using Qwen2-VL for better vision understanding.")
     print("This is just for testing - for real training use more episodes.")
     print("="*80 + "\n")
 
-    # Create training loop
+    # Create training loop with Qwen2-VL (better vision understanding)
     loop = RLTrainingLoop(
-        model_name="HuggingFaceTB/SmolVLM-Instruct",
-        experiment_name="quick_test",
+        model_name="Qwen/Qwen2-VL-2B-Instruct",
+        experiment_name="quick_test_qwen",
     )
 
     # Run with minimal settings for quick testing
@@ -39,7 +40,7 @@ def main():
 
     print("\n" + "="*80)
     print("Quick example complete!")
-    print("Check data/experiments/quick_test/ for results")
+    print("Check data/experiments/quick_test_qwen/ for results")
     print("="*80 + "\n")
 
 

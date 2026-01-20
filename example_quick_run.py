@@ -15,13 +15,20 @@ def main():
     print("\n" + "="*80)
     print("QUICK EXAMPLE RUN - Qwen2-VL-2B-Instruct")
     print("="*80)
-    print("This will run 3 iterations with ADAPTIVE episode counts:")
-    print("  - Iteration 1: 2 episodes  (quick bootstrap with random policy)")
-    print("  - Iteration 2: 4 episodes  (policy improving, gather more data)")
-    print("  - Iteration 3: 8 episodes  (refined policy, more episodes for stats)")
+    print("This will run 3 iterations with ADAPTIVE MINI-BATCH UPDATES:")
+    print("")
+    print("  Iteration 1: 2 eps → train → 2 eps → train → ... (8 updates)")
+    print("               = 16 episodes total, frequent small updates")
+    print("")
+    print("  Iteration 2: 4 eps → train → 4 eps → train (4 updates)")
+    print("               = 16 episodes total, less frequent updates")
+    print("")
+    print("  Iteration 3: 8 eps → train → 8 eps → train (2 updates)")
+    print("               = 16 episodes total, rare large updates")
+    print("")
     print("Using Qwen2-VL for better vision understanding.")
-    print("Each episode runs up to 500 steps (~1-2 mins per episode).")
-    print("Total estimated time: 15-30 minutes.")
+    print("Each episode ~500 steps with frame_skip=2 (~2-3 mins per episode).")
+    print("Total estimated time: 45-90 minutes.")
     print("="*80 + "\n")
 
     # Create training loop with Qwen2-VL (better vision understanding)
@@ -33,17 +40,17 @@ def main():
     # Run with settings to see improvement over iterations
     loop.run_training_loop(
         num_iterations=3,            # 3 iterations to see progression
-        episodes_per_iteration=16,   # Max episodes (used as cap for adaptive mode)
-        adaptive_episodes=True,      # Start small: 2, 4, 8 episodes
-        initial_episodes=2,          # Start with just 2 episodes in iteration 1
+        episodes_per_iteration=16,   # Total episodes budget per iteration
+        adaptive_updates=True,       # Enable mini-batch RL mode
+        initial_episodes=2,          # Start with 2 episodes per update
         max_steps_per_episode=500,   # Longer episodes (typical Pong game)
-        reflection_sample_rate=0.3,  # Reflect on 30% of poor actions
+        reflection_sample_rate=0.5,  # Reflect on 50% of poor actions
         positive_sample_rate=1.0,    # Reflect on ALL positive actions (spatial learning!)
-        finetune_epochs=2,           # 2 epochs for fine-tuning
+        finetune_epochs=2,           # 2 epochs for fine-tuning per update
         finetune_batch_size=2,       # Batch size for fine-tuning
         finetune_lr=2e-5,            # Learning rate
-        verbose=True,               # Disable verbose to reduce output noise
-        frame_skip=4,                # Repeat each action for 4 frames (4x faster!)
+        verbose=False,               # Disable verbose to reduce output noise
+        frame_skip=2,                # Repeat each action for 2 frames (2x faster!)
     )
     
     # Test Config

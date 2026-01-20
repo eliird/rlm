@@ -59,6 +59,159 @@ class RLTrainingLoop:
         print(f"Base model: {model_name}")
         print(f"{'='*80}\n")
 
+    def run_iteration_with_updates(
+        self,
+        iteration: int,
+        episodes_per_update: int = 2,
+        num_updates: int = 1,
+        max_steps_per_episode: int = 1000,
+        reflection_sample_rate: float = 0.3,
+        positive_sample_rate: float = 1.0,
+        finetune_epochs: int = 3,
+        finetune_batch_size: int = 4,
+        finetune_lr: float = 2e-5,
+        verbose: bool = False,
+        frame_skip: int = 4,
+    ):
+        """
+        Run one iteration with MULTIPLE train-update cycles (mini-batch RL).
+
+        This allows more frequent updates early in training:
+        - Iteration 1: 2 episodes → train → 2 episodes → train (multiple small updates)
+        - Iteration 2: 4 episodes → train → 4 episodes → train (fewer, larger updates)
+
+        Args:
+            iteration: Iteration number
+            episodes_per_update: Episodes to run before each training update
+            num_updates: Number of train-update cycles in this iteration
+            max_steps_per_episode: Max steps per episode
+            reflection_sample_rate: Fraction of poor steps to reflect on
+            positive_sample_rate: Fraction of successful steps to reflect on
+            finetune_epochs: Epochs for fine-tuning
+            finetune_batch_size: Batch size for fine-tuning
+            finetune_lr: Learning rate for fine-tuning
+            verbose: Enable verbose logging
+            frame_skip: Number of frames to repeat each action
+
+        Returns:
+            Dictionary with iteration results
+        """
+        print(f"\n{'='*80}")
+        print(f"ITERATION {iteration} - Mini-Batch Training")
+        print(f"{'='*80}")
+        print(f"Updates: {num_updates} × {episodes_per_update} episodes = {num_updates * episodes_per_update} total episodes")
+        print(f"{'='*80}\n")
+
+        iteration_dir = self.output_dir / f"iteration_{iteration}"
+        iteration_dir.mkdir(exist_ok=True)
+
+        all_episodes = []
+        all_training_examples = []
+        update_count = 0
+
+        # Run multiple train-update cycles
+        for update_idx in range(num_updates):
+            update_count += 1
+            print(f"\n{'─'*80}")
+            print(f"UPDATE {update_count}/{num_updates} (Iteration {iteration})")
+            print(f"{'─'*80}\n")
+
+            # 1. TRIAL PHASE: Run episodes_per_update episodes
+            print(f"PHASE 1: Running {episodes_per_update} trial episodes...")
+            print(f"Model: {self.current_model}")
+            print(f"Frame skip: {frame_skip}")
+            print(f"Verbose: {verbose}\n")
+
+            agent = SmolVLMAgent(model_name=self.current_model)
+            env = PongEnvironment(frame_skip=frame_skip)
+            runner = TrialRunner(agent, env, save_dir=str(iteration_dir / f"episodes_update{update_count}"))
+
+            episodes = runner.run_trials(
+                num_episodes=episodes_per_update,
+                max_steps_per_episode=max_steps_per_episode,
+                trial_name=f"iteration_{iteration}_update_{update_count}",
+                verbose=verbose,
+            )
+
+            all_episodes.extend(episodes)
+            env.close()
+            del agent
+
+            # 2. REFLECTION PHASE
+            print(f"\nPHASE 2: Generating reflections...")
+
+            agent = SmolVLMAgent(model_name=self.current_model)
+            reflector = ReflectionGenerator(agent, output_dir=str(iteration_dir / "training_data"))
+
+            training_examples = reflector.generate_reflections(
+                episodes=episodes,
+                reward_threshold=0.0,
+                sample_rate=reflection_sample_rate,
+                positive_sample_rate=positive_sample_rate,
+            )
+
+            all_training_examples.extend(training_examples)
+            reflector.save_training_data(training_examples, filename=f"iteration_{iteration}_update_{update_count}.json")
+
+            finetuning_data = reflector.create_finetuning_dataset(training_examples)
+            del agent
+
+            # 3. FINE-TUNING PHASE
+            print(f"\nPHASE 3: Fine-tuning model (update {update_count}/{num_updates})...")
+
+            if len(finetuning_data) < 5:
+                print(f"Warning: Only {len(finetuning_data)} examples. Skipping this update.")
+            else:
+                finetuner = SmolVLMFinetuner(
+                    model_name=self.current_model,
+                    output_dir=str(iteration_dir / f"checkpoints_update{update_count}"),
+                )
+
+                checkpoint_path = finetuner.finetune(
+                    training_examples=finetuning_data,
+                    num_epochs=finetune_epochs,
+                    batch_size=finetune_batch_size,
+                    learning_rate=finetune_lr,
+                    run_name=f"iter{iteration}_update{update_count}",
+                )
+
+                # Update model for NEXT update cycle
+                self.current_model = checkpoint_path
+                print(f"✓ Model updated: {checkpoint_path}")
+
+        # Final statistics for the iteration
+        trial_stats = runner.get_trial_statistics(all_episodes)
+        reflection_stats = reflector.analyze_training_data(all_training_examples)
+
+        iteration_results = {
+            'iteration': iteration,
+            'num_updates': num_updates,
+            'episodes_per_update': episodes_per_update,
+            'total_episodes': len(all_episodes),
+            'trial_statistics': trial_stats,
+            'reflection_statistics': reflection_stats,
+            'num_training_examples': len(all_training_examples),
+            'final_checkpoint': self.current_model,
+        }
+
+        results_path = iteration_dir / "results.json"
+        with open(results_path, 'w') as f:
+            json.dump(iteration_results, f, indent=2)
+
+        self.iteration_history.append(iteration_results)
+
+        print(f"\n{'='*80}")
+        print(f"ITERATION {iteration} COMPLETE")
+        print(f"{'='*80}")
+        print(f"Total updates: {num_updates}")
+        print(f"Total episodes: {len(all_episodes)}")
+        print(f"Mean reward: {trial_stats['mean_reward']:.2f} ± {trial_stats['std_reward']:.2f}")
+        print(f"Total training examples: {len(all_training_examples)}")
+        print(f"Final checkpoint: {self.current_model}")
+        print(f"{'='*80}\n")
+
+        return iteration_results
+
     def run_iteration(
         self,
         iteration: int,
@@ -73,7 +226,7 @@ class RLTrainingLoop:
         frame_skip: int = 4,
     ):
         """
-        Run one iteration of trial-reflect-finetune.
+        Run one iteration of trial-reflect-finetune (single update).
 
         Args:
             iteration: Iteration number
@@ -198,6 +351,7 @@ class RLTrainingLoop:
         episodes_per_iteration: int = 100,
         adaptive_episodes: bool = False,
         initial_episodes: int = 2,
+        adaptive_updates: bool = False,
         **kwargs
     ):
         """
@@ -205,35 +359,62 @@ class RLTrainingLoop:
 
         Args:
             num_iterations: Number of trial-reflect-finetune iterations
-            episodes_per_iteration: Episodes per iteration (used if adaptive_episodes=False)
-            adaptive_episodes: If True, start with fewer episodes and increase over time
-            initial_episodes: Starting number of episodes (when adaptive_episodes=True)
+            episodes_per_iteration: Episodes per iteration (if adaptive_episodes/updates=False)
+            adaptive_episodes: OLD MODE - start with fewer episodes, increase over time
+            initial_episodes: Starting number of episodes
+            adaptive_updates: NEW MODE - Multiple train cycles per iteration
+                             Iter 1: 2eps→train→2eps→train (many small updates)
+                             Iter 2: 4eps→train→4eps→train (fewer larger updates)
             **kwargs: Additional arguments passed to run_iteration
         """
         print(f"\n{'='*80}")
         print(f"Starting Training Loop")
         print(f"{'='*80}")
         print(f"Iterations: {num_iterations}")
-        if adaptive_episodes:
-            print(f"Adaptive episodes: Starting with {initial_episodes}, doubling each iteration")
+
+        if adaptive_updates:
+            print(f"Mode: ADAPTIVE UPDATES (mini-batch RL)")
+            print(f"  Each iteration has multiple train-update cycles")
+            print(f"  Early iterations: more frequent updates with less data")
+        elif adaptive_episodes:
+            print(f"Mode: ADAPTIVE EPISODES")
+            print(f"  Starting with {initial_episodes}, doubling each iteration")
         else:
-            print(f"Episodes per iteration: {episodes_per_iteration}")
+            print(f"Mode: STANDARD")
+            print(f"  Episodes per iteration: {episodes_per_iteration}")
         print(f"{'='*80}\n")
 
         for iteration in range(1, num_iterations + 1):
-            # Calculate episodes for this iteration
-            if adaptive_episodes:
-                # Start small, double each iteration: 2, 4, 8, 16, ...
-                # Cap at episodes_per_iteration
-                num_episodes = min(initial_episodes * (2 ** (iteration - 1)), episodes_per_iteration)
-            else:
-                num_episodes = episodes_per_iteration
+            if adaptive_updates:
+                # NEW MODE: Multiple updates per iteration
+                # Iteration 1: 2 episodes per update, many updates
+                # Iteration 2: 4 episodes per update, fewer updates
+                # Iteration 3: 8 episodes per update, even fewer updates
+                episodes_per_update = initial_episodes * (2 ** (iteration - 1))
+                # Keep total episodes roughly constant by reducing num_updates
+                num_updates = max(1, episodes_per_iteration // episodes_per_update)
 
-            self.run_iteration(
-                iteration=iteration,
-                num_episodes=num_episodes,
-                **kwargs
-            )
+                self.run_iteration_with_updates(
+                    iteration=iteration,
+                    episodes_per_update=episodes_per_update,
+                    num_updates=num_updates,
+                    **kwargs
+                )
+            elif adaptive_episodes:
+                # OLD MODE: Varying total episodes per iteration
+                num_episodes = min(initial_episodes * (2 ** (iteration - 1)), episodes_per_iteration)
+                self.run_iteration(
+                    iteration=iteration,
+                    num_episodes=num_episodes,
+                    **kwargs
+                )
+            else:
+                # STANDARD MODE: Fixed episodes, single update
+                self.run_iteration(
+                    iteration=iteration,
+                    num_episodes=episodes_per_iteration,
+                    **kwargs
+                )
 
         # Save final summary
         self.save_experiment_summary()

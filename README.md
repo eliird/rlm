@@ -207,28 +207,6 @@ current_model = checkpoint
 
 **Success metric**: Mean reward improvement over iterations
 
-## Hardware Requirements
-
-- **GPU**: NVIDIA A100 40GB (or similar)
-  - ~5GB for model inference
-  - ~20-30GB for fine-tuning
-- **Storage**: ~50GB for models and data
-- **RAM**: 16GB+ recommended
-
-## Computational Cost
-
-### Per Iteration (100 episodes)
-- **Trial phase**: ~30-60 minutes (100 episodes)
-- **Reflection phase**: ~15-30 minutes (generating training data)
-- **Fine-tuning phase**: ~20-40 minutes (3 epochs)
-- **Total**: ~1.5-2.5 hours per iteration
-
-### Full Experiment (5 iterations)
-- **Total time**: ~7-12 hours
-- **GPU hours**: ~7-12 hours of A100 time
-
-## Monitoring
-
 ### TensorBoard
 
 ```bash
@@ -244,34 +222,6 @@ cat data/experiments/<experiment_name>/experiment_summary.json
 # View iteration results
 cat data/experiments/<experiment_name>/iteration_1/results.json
 ```
-
-## Troubleshooting
-
-### Out of Memory
-
-- Reduce `--finetune-batch-size` (try 2 or 1)
-- Reduce `--episodes` per iteration
-- Reduce `--max-steps` per episode
-
-### Slow Training
-
-- Increase `--reflection-rate` to reflect on fewer steps
-- Reduce `--finetune-epochs`
-- Use fewer `--episodes`
-
-### Poor Performance
-
-- Increase `--episodes` for more training data
-- Increase `--reflection-rate` to 0.5 or higher
-- Try different `--finetune-lr` (1e-5 or 5e-5)
-
-## Future Improvements
-
-1. **LoRA/QLoRA**: Use parameter-efficient fine-tuning
-2. **Curriculum Learning**: Start with simpler tasks
-3. **Better Reflection**: Use larger model for reflection
-4. **Multi-game**: Extend to other Atari games
-5. **Comparison**: Benchmark against DQN, PPO, etc.
 
 ## Research Questions
 

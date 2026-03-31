@@ -99,13 +99,13 @@ The correction generator must reference the **exact wrong reasoning steps** the 
 | Dataset | Size | Solutions | Why |
 |---|---|---|---|
 | `EleutherAI/hendrycks_math` (levels 4-5) | ~5K hard problems | ✅ Full step-by-step LaTeX | Hard enough that template matching fails |
-| `TIGER-Lab/MathInstruct` (TheoremQA subset) | ~260K total | ✅ CoT + PoT | College-level, outside comfort zone |
+| `TIGER-Lab/MathInstruct` (excl. GSM sources) | ~220K | ✅ CoT + PoT | College-level, outside comfort zone |
 | `AI-MO/NuminaMath-CoT` | 860K problems | ✅ Full CoT | Large and diverse, full reasoning traces |
 | `open-r1/OpenR1-Math-220k` | 220K problems | ✅ 2-4 verified traces per problem | Multiple reasoning paths available |
 | `nvidia/OpenMathReasoning` | 306K problems | ✅ CoT + TIR | Pass rates logged — easy to find hard problems |
 
 ### Avoid
-- `openai/gsm8k` — model scores ~96%, almost no errors to harvest
+- `openai/gsm8k` and GSM derivatives (`gsm_train`, `gsm_gpt4`, `gsm_rft`) — model scores ~96%, almost no errors to harvest
 - `hendrycks/competition_math` levels 1-3 — too easy, same issue
 
 ---

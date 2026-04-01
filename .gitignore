@@ -1,4 +1,5 @@
 .venv
 math/datasets
+math/benchmark/results/
 data/
 __pycache__

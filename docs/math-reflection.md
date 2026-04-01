@@ -46,49 +46,77 @@ Phase 1 — Baseline Evaluation (one-time)
   RUN base gpt-oss-120b on test set → record accuracy per source/difficulty
   This is the baseline to beat after finetuning
           ↓
-Phase 2 — Error Correction Dataset Generation (train + val only)
-  1. SELECT problem from train/val split
-            ↓
-  2. RUN gpt-oss-120b → generates reasoning + answer
-            ↓
-  3. COMPARE answer to ground truth label
-            ↓
-       Correct? → discard (no training signal)
-       Wrong?   → proceed
-            ↓
-  4. SELF-REFLECT using gpt-oss-120b (high reasoning budget):
-     Input:  problem + model's wrong reasoning + wrong answer + reference solution (step-by-step)
-     Output: "You recognized this as [X], but it differs because [Y]. Correct reasoning: [Z]"
-     Hypothesis: providing the full step-by-step reference solution gives the model enough
-     signal to identify where its reasoning diverged, without needing an external teacher model.
-            ↓
-  5. FORMAT in Harmony chat format
-            ↓
-Phase 3 — Finetuning
-  6. FINETUNE gpt-oss-120b via SFT (LoRA on attention layers)
+Phase 2–4 — Iterative Error Correction (repeat N rounds)
+
+  Each round:
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 2a. SELECT problems from train split, sampled evenly across │
+  │     sources (stratified round-robin)                        │
+  │              ↓                                              │
+  │ 2b. RUN current model → generates reasoning + answer        │
+  │              ↓                                              │
+  │ 2c. COMPARE answer to ground truth                          │
+  │              ↓                                              │
+  │      Correct? → discard (no training signal)                │
+  │      Wrong?   → proceed                                     │
+  │              ↓                                              │
+  │ 2d. GENERATE CORRECTION using current model (high budget):  │
+  │     Input:  problem + wrong reasoning (scaffolding only)    │
+  │             + reference solution                            │
+  │     Output: problem-centric insight:                        │
+  │             "Problems like this are often confused with [X] │
+  │              because [Y]. Key distinction: [Z].             │
+  │              Correct approach: [...]"                       │
+  │     Wrong reasoning guides what to address but does NOT     │
+  │     appear in the training example.                         │
+  │              ↓                                              │
+  │ 2e. STOP when target corrections reached (default: 10K)     │
+  │              ↓                                              │
+  │ 2f. FINETUNE on corrections via SFT (LoRA on attn layers)   │
+  │              ↓                                              │
+  │ 2g. EVALUATE finetuned model on test set                    │
+  │     → compare accuracy to previous round                    │
+  │     → check regression on previously correct problems       │
+  └─────────────────────────────────────────────────────────────┘
+          ↓ repeat with finetuned model as the new base
 ```
+
+### Why iterative
+
+After each round of finetuning the model changes — easy template-matching failures get fixed, but new blind spots may emerge. Generating all corrections from the base model and finetuning once means by round 2 the data no longer reflects the model's actual failures. Iterating ensures:
+
+- Each round's corrections target the *current* model's mistakes, not a stale snapshot
+- Problems that survive each round are progressively harder, providing stronger training signal
+- The process naturally terminates when the error rate stops improving
 
 ---
 
 ## Error Correction Data Format
 
-Each training example contains **contrastive information** — both the wrong path and the right path — making it more informative per example than standard SFT.
+Training examples are **problem-centric and self-contained** — the wrong attempt is used as scaffolding during generation but does not appear in the final training example.
 
+**Generation prompt (internal, not saved):**
 ```
-Problem:           [math problem]
-Model's reasoning: [what the model actually generated]
-Model's answer:    [wrong answer]
-Correct answer:    [ground truth]
-Reference solution:[step-by-step correct solution]
+Problem:            [math problem]
+Common wrong path:  [model's wrong reasoning — used to identify the misconception]
+Correct solution:   [reference step-by-step solution]
 
-→ Correction output:
-"This problem resembles [familiar pattern], which is why you applied [method].
- However, the key difference here is [specific twist].
- The correct approach is: [step-by-step reasoning] → [correct answer]"
+→ Generate a response that explains this problem as a teacher would,
+  addressing the common misconception without referencing a specific student's mistake.
 ```
 
-### Important: Anchor Corrections to the Actual Mistake
-The correction generator must reference the **exact wrong reasoning steps** the model produced — not a generic explanation of a common error type. This keeps the dataset genuinely targeted rather than just another CoT dataset.
+**Training example (what gets saved):**
+```
+User:      [math problem]
+Assistant: "Problems like this are often confused with [X] because [Y].
+            The key distinction here is [Z].
+            Correct approach: [step-by-step reasoning] → [correct answer]"
+```
+
+### Why problem-centric framing
+- The training example has no missing context — model sees problem, produces insight
+- Generalizes better: model learns to anticipate common wrong paths, not react to a specific mistake
+- At inference time the model preemptively addresses the likely misconception rather than needing to have already failed
 
 ---
 

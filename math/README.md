@@ -93,7 +93,7 @@ Requires vLLM server running.
 python math/generate_corrections.py --target 50
 
 # Full run (default: 10K corrections)
-python math/generate_corrections.py --target 10000 --batchs-size 256
+python math/generate_corrections.py --target 10000 --batchs-size 512
 ```
 
 Defaults: `--target 10000`, `--batch-size 128`

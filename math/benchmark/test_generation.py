@@ -1,14 +1,17 @@
 """
-Quick generation test to verify gpt-oss-120b loads and generates correctly.
-Run with: /data/work/irdali.durrani/miniconda3/bin/python math/benchmark/test_generation.py
+Quick generation test to verify the vLLM server is running and responding correctly.
+
+Requires vLLM server running:
+  bash math/benchmark/serve.sh
+
+Run from repo root:
+  python math/benchmark/test_generation.py
 """
 
-import re
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+import requests
 
-MODEL_ID = "openai/gpt-oss-120b"
-CACHE_DIR = "/data/cache/huggingface/hub"
+SERVER_URL = "http://localhost:8000/v1/chat/completions"
+MODEL_NAME = "deepseek-r1-32b"
 
 PROBLEMS = [
     "What is 2 + 2?",
@@ -16,48 +19,40 @@ PROBLEMS = [
     "What is the derivative of x^3 + 2x?",
 ]
 
-print(f"Loading tokenizer...")
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, cache_dir=CACHE_DIR)
 
-print(f"Loading model (this may take a minute)...")
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_ID,
-    cache_dir=CACHE_DIR,
-    dtype=torch.bfloat16,
-    device_map="auto",
-)
-model.eval()
-print(f"Model loaded on: {next(model.parameters()).device}\n")
+def query(problem: str) -> tuple[str, str]:
+    resp = requests.post(
+        SERVER_URL,
+        json={
+            "model": MODEL_NAME,
+            "messages": [{"role": "user", "content": problem}],
+            "max_tokens": 1024,
+        },
+        timeout=120,
+    )
+    resp.raise_for_status()
+    content = (resp.json()["choices"][0]["message"].get("content") or "").strip()
+    if "</think>" in content:
+        thinking, response = content.split("</think>", 1)
+        thinking = thinking.replace("<think>", "").strip()
+        response = response.strip()
+    else:
+        thinking, response = "", content
+    return thinking, response
+
+
+# Verify server is up
+try:
+    requests.get("http://localhost:8000/health", timeout=5).raise_for_status()
+except Exception:
+    print("ERROR: vLLM server not reachable. Run: bash math/benchmark/serve.sh")
+    exit(1)
+
+print(f"Server OK. Model: {MODEL_NAME}\n")
 
 for problem in PROBLEMS:
-    print(f"{'='*60}")
+    print("=" * 60)
     print(f"PROBLEM: {problem}")
-
-    messages = [{"role": "user", "content": problem}]
-    prompt = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True,
-        reasoning_effort="low",
-    )
-
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    input_len = inputs["input_ids"].shape[1]
-
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=512,
-            do_sample=False,
-            pad_token_id=tokenizer.pad_token_id,
-        )
-
-    generated = tokenizer.decode(outputs[0][input_len:], skip_special_tokens=True)
-    # The response contains analysis (thinking) and final sections separated by "assistantfinal"
-    # We only want the final answer part
-    if "assistantfinal" in generated:
-        final = generated.split("assistantfinal", 1)[1].strip()
-    else:
-        final = generated.strip()
-    print(f"THINKING: {generated.split('assistantfinal')[0].replace('analysis', '').strip()}")
-    print(f"FINAL:\n{final}\n")
+    thinking, response = query(problem)
+    print(f"THINKING: {thinking[:300]}{'...' if len(thinking) > 300 else ''}")
+    print(f"RESPONSE:\n{response}\n")

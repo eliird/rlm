@@ -4,8 +4,14 @@ Generate error-correction training data from the train split.
 Pipeline per problem:
   1. Run model → get reasoning + answer
   2. Compare answer to ground truth
-  3. If wrong → send reflection prompt → get problem-centric correction
-  4. Save as SFT training example: (problem, correction)
+  3. If wrong → send reflection prompt → model produces full training example:
+       <think> fresh reasoning that identifies the pitfall </think>
+       clean step-by-step solution ending in \\boxed{}
+  4. Save think and response separately as SFT training example
+
+The reflection prompt gives the model the wrong attempt + reference solution as context,
+but instructs it to write as if solving fresh — no references to "the correct solution"
+or "the wrong approach" in the output.
 
 Problems are sampled evenly across sources. Stops when --target corrections are saved.
 Resumable — skips problems already processed.
@@ -14,7 +20,7 @@ Requires vLLM server running:
   bash math/benchmark/serve.sh
 
 Run from repo root:
-  python math/generate_corrections.py [--target N] [--batch-size N] [--reasoning-attempt high] [--reasoning-reflect high]
+  python math/generate_corrections.py [--target N] [--batch-size N]
 """
 
 import argparse
@@ -29,24 +35,27 @@ import requests
 from tqdm import tqdm
 
 SERVER_URL = "http://localhost:8000/v1/chat/completions"
-MODEL_NAME = "gpt-oss-120b"
+MODEL_NAME = "deepseek-r1-32b"
 TRAIN_PATH = Path("math/datasets/combined/train.parquet")
 OUT_DIR = Path("math/data")
 CORRECTIONS_PATH = OUT_DIR / "corrections.jsonl"
 
 REFLECTION_PROMPT = """\
-Below is a math problem, a common incorrect approach students take, and the correct step-by-step solution.
+Below is a math problem, a flawed attempt, and the correct solution. Use these to inform your response, but do NOT reference them in your output.
 
 Problem:
 {problem}
 
-Common incorrect approach:
+Flawed attempt (shows where reasoning can go wrong):
 {wrong_reasoning}
 
-Correct solution:
+Correct solution (for reference only):
 {reference_solution}
 
-Explain this problem as an expert teacher would. Do not say "you did X wrong" or reference a specific student's mistake. Instead, explain what makes this problem easy to confuse with a simpler one, what the key distinction is, and walk through the correct reasoning. End with the final answer in \\boxed{{}}.\
+Now write a response to the problem as if solving it for the first time, with no knowledge of the above.
+In your <think> block, reason carefully — naturally identifying any subtle traps or edge cases in this problem as you work through it.
+After </think>, write a clean step-by-step solution ending with the answer in \\boxed{{}}.
+Do not mention the flawed attempt or reference solution anywhere in your response.\
 """
 
 
@@ -80,19 +89,30 @@ def is_correct(predicted: str, expected: str) -> bool:
     return normalize(predicted) == normalize(expected)
 
 
-def chat(messages: list[dict], reasoning_effort: str, max_tokens: int = 32768) -> tuple[str, str] | None:
-    """Returns (thinking, content), or None on timeout."""
+def chat(messages: list[dict], max_tokens: int = 32768) -> tuple[str, str] | None:
+    """
+    Returns (think, response) or None on timeout.
+    Parses <think>...</think> from content — vLLM strips the opening tag but
+    leaves the closing tag, so we strip both ends manually.
+    """
     payload = {
         "model": MODEL_NAME,
         "messages": messages,
         "max_tokens": max_tokens,
-        "chat_template_kwargs": {"reasoning_effort": reasoning_effort},
     }
     try:
         resp = requests.post(SERVER_URL, json=payload, timeout=300)
         resp.raise_for_status()
-        msg = resp.json()["choices"][0]["message"]
-        return (msg.get("reasoning") or "").strip(), (msg.get("content") or "").strip()
+        content = (resp.json()["choices"][0]["message"].get("content") or "").strip()
+        # vLLM strips <think> but leaves </think> — split on it
+        if "</think>" in content:
+            think, response = content.split("</think>", 1)
+            think = think.replace("<think>", "").strip()
+            response = response.strip()
+        else:
+            think = ""
+            response = content
+        return think, response
     except requests.exceptions.Timeout:
         return None
 
@@ -140,41 +160,44 @@ def sample_stratified(train_df: pd.DataFrame, done: set[int]) -> list[int]:
     return indices
 
 
-def process(idx: int, row: pd.Series, args: argparse.Namespace) -> dict | None:
-    """Run one problem through the full pipeline. Returns correction or None if correct."""
+def process(idx: int, row: pd.Series, args: argparse.Namespace) -> dict | str:
+    """
+    Run one problem through the full pipeline.
+    Returns a record dict, or "correct" / "timeout" / "invalid".
+    """
+    # Step 1: attempt the problem
     result = chat(
         [{"role": "user", "content": row["problem"] + "\n\nSolve the problem step by step. Put your final answer in \\boxed{} at the end."}],
-        reasoning_effort=args.reasoning_attempt,
     )
     if result is None:
         return "timeout"
-    _, response = result
-    predicted = extract_answer(response, row["answer"])
+    _, attempt_response = result
+    predicted = extract_answer(attempt_response, row["answer"])
 
     if is_correct(predicted, row["answer"]):
         return "correct"
 
+    # Step 2: reflection — model produces fresh think + solution informed by what went wrong
     prompt = REFLECTION_PROMPT.format(
         problem=row["problem"],
-        wrong_reasoning=response,
+        wrong_reasoning=attempt_response,
         reference_solution=row["solution"],
     )
-    result = chat(
-        [{"role": "user", "content": prompt}],
-        reasoning_effort=args.reasoning_reflect,
-    )
+    result = chat([{"role": "user", "content": prompt}])
     if result is None:
         return "timeout"
-    _, correction = result
+    think, response = result
+    if not think or not response:
+        return "invalid"
 
     return {
         "idx": int(idx),
         "source": row["source"],
         "problem": row["problem"],
         "correct_answer": row["answer"],
-        "correct_solution": row["solution"],
-        "model_response": response,
-        "correction": correction,
+        "model_response": attempt_response,
+        "think": think,
+        "response": response,
     }
 
 
@@ -193,8 +216,6 @@ def run(args: argparse.Namespace):
     print(f"Already saved   : {already_saved:,}")
     print(f"Target          : {args.target:,}")
     print(f"Remaining to hit target (est): {max(0, args.target - already_saved):,} corrections needed")
-    print(f"Attempt budget  : {args.reasoning_attempt}")
-    print(f"Reflect budget  : {args.reasoning_reflect}")
 
     if already_saved >= args.target:
         print(f"Target already reached ({already_saved} >= {args.target}).")
@@ -207,7 +228,7 @@ def run(args: argparse.Namespace):
         return
 
     out_file = open(CORRECTIONS_PATH, "a")
-    stats = {"correct": 0, "corrected": already_saved, "empty": 0, "timeout": 0}
+    stats = {"correct": 0, "corrected": already_saved, "invalid": 0, "timeout": 0}
     stop = False
 
     def fetch(idx_row):
@@ -234,29 +255,29 @@ def run(args: argparse.Namespace):
                     stats["correct"] += 1
                 elif record == "timeout":
                     stats["timeout"] += 1
+                elif record == "invalid":
+                    stats["invalid"] += 1
                 else:
-                    has_box = bool(extract_boxed(record["correction"]))
+                    # Valid record: has think block and boxed answer in response
+                    has_box = bool(extract_boxed(record["response"]))
                     if has_box:
                         stats["corrected"] += 1
+                        pbar.update(1)
                     else:
-                        stats["empty"] += 1
+                        stats["invalid"] += 1
                     out_file.write(json.dumps(record) + "\n")
                     out_file.flush()
-                    if has_box:
-                        pbar.update(1)
 
                 pbar.set_postfix({
                     "correct": stats["correct"],
-                    "no_box": stats["empty"],
+                    "invalid": stats["invalid"],
                     "timeout": stats["timeout"],
                     "in_flight": len(in_flight),
                     "last_s": f"{elapsed:.1f}s",
                 })
 
-                # Stop submitting new work once target is reached
                 if stats["corrected"] >= args.target:
                     stop = True
-
 
                 if not stop:
                     next_idx = next(idx_iter, None)
@@ -270,7 +291,7 @@ def run(args: argparse.Namespace):
     print(f"  Corrections saved   : {stats['corrected']:,}  (target: {args.target:,})")
     print(f"  Correct (discarded) : {stats['correct']:,}")
     print(f"  Timed out (skipped) : {stats['timeout']:,}")
-    print(f"  No boxed answer     : {stats['empty']:,}")
+    print(f"  Invalid (skipped)   : {stats['invalid']:,}")
     print(f"\nOutput: {CORRECTIONS_PATH}")
 
 
@@ -279,7 +300,5 @@ if __name__ == "__main__":
     parser.add_argument("--target", type=int, default=10_000,
                         help="Stop after this many corrections are saved")
     parser.add_argument("--batch-size", type=int, default=128)
-    parser.add_argument("--reasoning-attempt", choices=["low", "medium", "high"], default="high")
-    parser.add_argument("--reasoning-reflect", choices=["low", "medium", "high"], default="high")
     args = parser.parse_args()
     run(args)

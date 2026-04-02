@@ -16,7 +16,7 @@ import pandas as pd
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-MODEL_ID = "openai/gpt-oss-120b"
+MODEL_ID = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
 CACHE_DIR = "/data/cache/huggingface/hub"
 TEST_PATH = Path("math/datasets/combined/test.parquet")
 RESULTS_DIR = Path("math/benchmark/results")
@@ -39,14 +39,9 @@ def is_correct(predicted: str, expected: str) -> bool:
     return normalize_answer(predicted) == normalize_answer(expected)
 
 
-def build_prompt(tokenizer, problem: str, reasoning_effort: str) -> str:
-    messages = [{"role": "user", "content": problem}]
-    return tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True,
-        reasoning_effort=reasoning_effort,
-    )
+def build_prompt(tokenizer, problem: str) -> str:
+    messages = [{"role": "user", "content": problem + "\n\nSolve the problem step by step. Put your final answer in \\boxed{} at the end."}]
+    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
 
 def run(args):
@@ -61,7 +56,6 @@ def run(args):
         test_df = test_df.sample(n=args.limit, random_state=42).reset_index(drop=True)
 
     print(f"Evaluating on {len(test_df):,} problems")
-    print(f"Reasoning effort: {args.reasoning}")
 
     print(f"\nLoading model {MODEL_ID}...")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, cache_dir=CACHE_DIR)
@@ -81,7 +75,7 @@ def run(args):
         batch = test_df.iloc[i : i + args.batch_size]
 
         prompts = [
-            build_prompt(tokenizer, row["problem"], args.reasoning)
+            build_prompt(tokenizer, row["problem"])
             for _, row in batch.iterrows()
         ]
 
@@ -98,9 +92,8 @@ def run(args):
         for j, output in enumerate(outputs):
             input_len = inputs["input_ids"].shape[1]
             generated = tokenizer.decode(output[input_len:], skip_special_tokens=True)
-            # Extract only the final answer section, not the analysis/thinking trace
-            if "assistantfinal" in generated:
-                generated = generated.split("assistantfinal", 1)[1]
+            # Strip DeepSeek-R1 thinking tags, keep only the final response
+            generated = re.sub(r"<think>.*?</think>", "", generated, flags=re.DOTALL).strip()
             predicted = extract_boxed(generated)
             expected = batch.iloc[j]["answer"]
             correct = is_correct(predicted, expected)
@@ -134,6 +127,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=None, help="Evaluate on a random subset of N problems")
     parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--reasoning", choices=["low", "medium", "high"], default="medium")
     args = parser.parse_args()
     run(args)

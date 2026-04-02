@@ -20,7 +20,7 @@ import requests
 from tqdm import tqdm
 
 SERVER_URL = "http://localhost:8000/v1/chat/completions"
-MODEL_NAME = "gpt-oss-120b"
+MODEL_NAME = "deepseek-r1-32b"
 TEST_PATH = Path("math/datasets/combined/test.parquet")
 RESULTS_DIR = Path("math/benchmark/results")
 RESPONSES_PATH = RESULTS_DIR / "responses.jsonl"
@@ -37,21 +37,23 @@ def load_existing(path: Path) -> set[int]:
     return done
 
 
-def query(problem: str, reasoning_effort: str, max_tokens: int = 32768) -> tuple[str, str]:
+def query(problem: str, max_tokens: int = 32768) -> tuple[str, str]:
     """Returns (thinking, final_response)."""
     payload = {
         "model": MODEL_NAME,
         "messages": [{"role": "user", "content": problem + "\n\nSolve the problem step by step. Put your final answer in \\boxed{} at the end."}],
         "max_tokens": max_tokens,
-        "chat_template_kwargs": {"reasoning_effort": reasoning_effort},
     }
     resp = requests.post(SERVER_URL, json=payload, timeout=300)
     resp.raise_for_status()
-    data = resp.json()
-    message = data["choices"][0]["message"]
-    thinking = message.get("reasoning", "") or ""
-    content = message.get("content", "") or ""
-    return thinking.strip(), content.strip()
+    content = (resp.json()["choices"][0]["message"].get("content") or "").strip()
+    if "</think>" in content:
+        thinking, response = content.split("</think>", 1)
+        thinking = thinking.replace("<think>", "").strip()
+        response = response.strip()
+    else:
+        thinking, response = "", content
+    return thinking, response
 
 
 def run(args):
@@ -70,7 +72,6 @@ def run(args):
     print(f"Total problems : {len(test_df):,}")
     print(f"Already done   : {len(done_indices):,}")
     print(f"Remaining      : {len(remaining):,}")
-    print(f"Reasoning      : {args.reasoning}")
 
     if remaining.empty:
         print("Nothing to do.")
@@ -89,7 +90,7 @@ def run(args):
     def fetch(idx_row):
         idx, row = idx_row
         t0 = time.time()
-        thinking, response = query(row["problem"], args.reasoning)
+        thinking, response = query(row["problem"])
         elapsed = time.time() - t0
         return {
             "idx": int(idx),
@@ -140,6 +141,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--reasoning", choices=["low", "medium", "high"], default="medium")
     args = parser.parse_args()
     run(args)

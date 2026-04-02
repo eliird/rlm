@@ -160,12 +160,31 @@ DeepSeek found that pure RL (R1-Zero) produced strong reasoning but suffered fro
 
 ---
 
-## Finetuning Notes for MoE Architecture
+## Target Model: DeepSeek-R1-Distill-Qwen-32B
 
-- **Apply LoRA to attention layers**, not MoE feed-forward layers — reasoning patterns live in attention, and inactive experts won't receive gradient updates anyway
-- **Harmony format is mandatory** — all training examples must use the Harmony chat template or the model will behave incorrectly
-- **Full finetune fits on a single H100 node** per OpenAI's model card, but LoRA/QLoRA is recommended for efficiency
-- **Standard SFT frameworks** (Axolotl, LLaMA-Factory) support MoE but require explicit configuration — don't use default settings
+Switched from gpt-oss-120b to DeepSeek-R1-Distill-Qwen-32B. Reasons:
+- gpt-oss-120b requires MXFP4 quantization to fit on a single H100, which depends on `triton_kernels` — a package not available in the Kaggle environment
+- DeepSeek-R1-Distill-32B fits cleanly in bf16 on 2x H100s (~33GB per GPU), no quantization needed
+- Already trained for mathematical reasoning (distilled from R1), strong baseline on competition math
+
+| Property | Detail |
+|---|---|
+| Architecture | Dense transformer (Qwen2) |
+| Parameters | 32B |
+| Context Window | 128K tokens |
+| Reasoning format | `<think>...</think>` tags in content |
+| bf16 VRAM | ~64GB (2x H100) |
+| Serving | vLLM, tensor-parallel-size 2 |
+
+---
+
+## Finetuning Notes
+
+- **Full finetune** across all 64 transformer layers — no LoRA
+- **Freeze** `embed_tokens` and `lm_head` only; train all attention and MLP layers
+- **FSDP** across 8x H100s with `FULL_SHARD` strategy, bf16 mixed precision
+- **Adam-Mini** optimizer (`pip install adam-mini`) — ~4-5x less memory than AdamW at this scale; falls back to AdamW if not installed
+- **Standard ChatML format** — `<|User|>...<|Assistant|>...` with `<|end▁of▁sentence|>` EOS
 
 ---
 

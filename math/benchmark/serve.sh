@@ -1,9 +1,9 @@
 #!/bin/bash
-# Deploy gpt-oss-120b using vLLM OpenAI-compatible server.
+# Deploy DeepSeek-R1-Distill-Qwen-32B using vLLM OpenAI-compatible server.
 # Run from repo root: bash math/benchmark/serve.sh
 # Logs are written to math/benchmark/logs/vllm_serve.log
 
-MODEL_ID="openai/gpt-oss-120b"
+MODEL_ID="deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
 CACHE_DIR="/data/cache/huggingface/hub"
 PORT=8000
 LOG_DIR="math/benchmark/logs"
@@ -14,8 +14,8 @@ echo "Logs -> $LOG_FILE"
 
 .venv/bin/vllm serve "$MODEL_ID" \
     --download-dir "$CACHE_DIR" \
-    --tensor-parallel-size 8 \
+    --tensor-parallel-size 2 \
     --dtype bfloat16 \
     --port "$PORT" \
-    --served-model-name gpt-oss-120b \
-    2>&1 | tee "$LOG_FILE"
+    --served-model-name deepseek-r1-32b  
+

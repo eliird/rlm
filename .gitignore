@@ -1,5 +1,8 @@
 .venv
 math/datasets
+math/benchmark/logs
 math/benchmark/results/
 data/
 __pycache__
+secrets.sh
+ai-math

@@ -37,8 +37,6 @@ from tqdm import tqdm
 SERVER_URL = "http://localhost:8000/v1/chat/completions"
 MODEL_NAME = "deepseek-r1-32b"
 TRAIN_PATH = Path("math/datasets/combined/train.parquet")
-OUT_DIR = Path("math/data")
-CORRECTIONS_PATH = OUT_DIR / "corrections.jsonl"
 
 REFLECTION_PROMPT = """\
 Below is a math problem, a flawed attempt, and the correct solution. Use these to inform your response, but do NOT reference them in your output.
@@ -220,13 +218,14 @@ def process(idx: int, row: pd.Series, args: argparse.Namespace) -> dict | str:
 
 
 def run(args: argparse.Namespace):
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    corrections_path = Path(args.output)
+    corrections_path.parent.mkdir(parents=True, exist_ok=True)
 
     print("Loading train set...")
     train_df = pd.read_parquet(TRAIN_PATH)
     train_df = train_df[train_df["answer"] != ""].reset_index(drop=True)
 
-    done = load_done(CORRECTIONS_PATH)
+    done = load_done(corrections_path)
     already_saved = len(done)
     indices = sample_stratified(train_df, done)
 
@@ -245,7 +244,7 @@ def run(args: argparse.Namespace):
         print("ERROR: vLLM server not reachable. Run: bash math/benchmark/serve.sh")
         return
 
-    out_file = open(CORRECTIONS_PATH, "a")
+    out_file = open(corrections_path, "a")
     stats = {"correct": 0, "corrected": already_saved, "invalid": 0, "timeout": 0}
     stop = False
 
@@ -310,7 +309,7 @@ def run(args: argparse.Namespace):
     print(f"  Correct (discarded) : {stats['correct']:,}")
     print(f"  Timed out (skipped) : {stats['timeout']:,}")
     print(f"  Invalid (skipped)   : {stats['invalid']:,}")
-    print(f"\nOutput: {CORRECTIONS_PATH}")
+    print(f"\nOutput: {corrections_path}")
 
 
 if __name__ == "__main__":
@@ -318,5 +317,7 @@ if __name__ == "__main__":
     parser.add_argument("--target", type=int, default=10_000,
                         help="Stop after this many corrections are saved")
     parser.add_argument("--batch-size", type=int, default=512)
+    parser.add_argument("--output", type=str, default="math/data/corrections.jsonl",
+                        help="Path to write corrections JSONL")
     args = parser.parse_args()
     run(args)

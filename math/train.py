@@ -5,9 +5,11 @@ Full finetune (no LoRA), FSDP across all available GPUs.
 Freezes embed_tokens and lm_head — trains all transformer layers.
 
 Run:
-  accelerate launch --config_file math/fsdp_config.yaml math/train.py
+  accelerate launch --config_file math/fsdp_config.yaml math/train.py \
+    [--epochs N] [--output-dir PATH] [--data PATH]
 """
 
+import argparse
 import json
 from pathlib import Path
 
@@ -22,8 +24,6 @@ from transformers import (
 
 MODEL_ID = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
 CACHE_DIR = "/data/cache/huggingface/hub"
-CORRECTIONS_PATH = Path("math/data/corrections.jsonl")
-OUTPUT_DIR = Path("math/checkpoints")
 
 MAX_LENGTH = 8192
 BATCH_SIZE_PER_GPU = 1
@@ -31,7 +31,6 @@ GRAD_ACCUM_STEPS = 16
 LR = 1e-5
 WEIGHT_DECAY = 0.01
 WARMUP_STEPS = 100
-MAX_EPOCHS = 3
 
 
 def build_assistant_content(rec: dict) -> str:
@@ -84,16 +83,30 @@ class CorrectionDataset(Dataset):
         }
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--epochs", type=int, default=2,
+                        help="Number of training epochs (default: 2)")
+    parser.add_argument("--output-dir", type=str, default="math/checkpoints",
+                        help="Directory to save the final checkpoint")
+    parser.add_argument("--data", type=str, default="math/data/corrections.jsonl",
+                        help="Path to corrections JSONL file")
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, cache_dir=CACHE_DIR)
     tokenizer.padding_side = "right"
 
-    dataset = CorrectionDataset(CORRECTIONS_PATH, tokenizer, MAX_LENGTH)
+    dataset = CorrectionDataset(Path(args.data), tokenizer, MAX_LENGTH)
 
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
         cache_dir=CACHE_DIR,
         torch_dtype=torch.bfloat16,
+        use_cache=False,
     )
 
     # Freeze embeddings and lm_head — train only transformer layers
@@ -102,8 +115,8 @@ def main():
             param.requires_grad_(False)
 
     training_args = TrainingArguments(
-        output_dir=str(OUTPUT_DIR),
-        num_train_epochs=MAX_EPOCHS,
+        output_dir=args.output_dir,
+        num_train_epochs=args.epochs,
         per_device_train_batch_size=BATCH_SIZE_PER_GPU,
         gradient_accumulation_steps=GRAD_ACCUM_STEPS,
         learning_rate=LR,
@@ -113,7 +126,7 @@ def main():
         bf16=True,
 
         logging_steps=10,
-        save_strategy="epoch",
+        save_strategy="no",        # save only at end of training, not per epoch
         dataloader_num_workers=2,
         dataloader_pin_memory=True,
         remove_unused_columns=False,
@@ -127,6 +140,7 @@ def main():
         train_dataset=dataset,
     )
     trainer.train()
+    trainer.save_model(args.output_dir)
 
 
 if __name__ == "__main__":

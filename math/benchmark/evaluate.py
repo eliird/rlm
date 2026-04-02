@@ -14,8 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
-RESPONSES_PATH = Path("math/benchmark/results/responses.jsonl")
-RESULTS_DIR = Path("math/benchmark/results")
+import argparse
 
 
 def extract_boxed(text: str) -> str:
@@ -53,12 +52,23 @@ def is_correct(predicted: str, expected: str) -> bool:
 
 
 def main():
-    if not RESPONSES_PATH.exists():
-        print(f"No responses found at {RESPONSES_PATH}. Run infer.py first.")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", type=str, default="math/benchmark/results/responses.jsonl",
+                        help="Responses JSONL from infer.py")
+    parser.add_argument("--output-dir", type=str, default="math/benchmark/results",
+                        help="Directory to write eval.parquet and eval_summary.txt")
+    args = parser.parse_args()
+
+    responses_path = Path(args.input)
+    results_dir = Path(args.output_dir)
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    if not responses_path.exists():
+        print(f"No responses found at {responses_path}. Run infer.py first.")
         return
 
-    print(f"Loading responses from {RESPONSES_PATH}...")
-    df = pd.read_json(RESPONSES_PATH, lines=True)
+    print(f"Loading responses from {responses_path}...")
+    df = pd.read_json(responses_path, lines=True)
     print(f"  {len(df):,} responses loaded")
 
     df["predicted"] = df["response"].apply(extract_boxed)
@@ -89,11 +99,11 @@ def main():
     summary = "\n".join(lines)
     print("\n" + summary)
 
-    summary_path = RESULTS_DIR / "eval_summary.txt"
+    summary_path = results_dir / "eval_summary.txt"
     summary_path.write_text(summary)
     print(f"\nSummary saved to {summary_path}")
 
-    eval_path = RESULTS_DIR / "eval.parquet"
+    eval_path = results_dir / "eval.parquet"
     df.to_parquet(eval_path, index=False)
     print(f"Full results saved to {eval_path}")
 

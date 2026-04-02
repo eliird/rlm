@@ -22,8 +22,6 @@ from tqdm import tqdm
 SERVER_URL = "http://localhost:8000/v1/chat/completions"
 MODEL_NAME = "deepseek-r1-32b"
 TEST_PATH = Path("math/datasets/combined/test.parquet")
-RESULTS_DIR = Path("math/benchmark/results")
-RESPONSES_PATH = RESULTS_DIR / "responses.jsonl"
 
 
 def load_existing(path: Path) -> set[int]:
@@ -35,6 +33,9 @@ def load_existing(path: Path) -> set[int]:
             rec = json.loads(line)
             done.add(rec["idx"])
     return done
+
+
+
 
 
 def query(problem: str, max_tokens: int = 32768) -> tuple[str, str]:
@@ -57,7 +58,8 @@ def query(problem: str, max_tokens: int = 32768) -> tuple[str, str]:
 
 
 def run(args):
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    responses_path = Path(args.output)
+    responses_path.parent.mkdir(parents=True, exist_ok=True)
 
     print("Loading test set...")
     test_df = pd.read_parquet(TEST_PATH)
@@ -66,7 +68,7 @@ def run(args):
     if args.limit:
         test_df = test_df.sample(n=args.limit, random_state=42).reset_index(drop=True)
 
-    done_indices = load_existing(RESPONSES_PATH)
+    done_indices = load_existing(responses_path)
     remaining = test_df[~test_df.index.isin(done_indices)].copy()
 
     print(f"Total problems : {len(test_df):,}")
@@ -84,7 +86,7 @@ def run(args):
         print("ERROR: vLLM server not reachable at localhost:8000. Run: bash math/benchmark/serve.sh")
         return
 
-    out_file = open(RESPONSES_PATH, "a")
+    out_file = open(responses_path, "a")
     indices = remaining.index.tolist()
 
     def fetch(idx_row):
@@ -134,12 +136,14 @@ def run(args):
         pbar.close()
 
     out_file.close()
-    print(f"\nResponses saved to {RESPONSES_PATH}")
+    print(f"\nResponses saved to {responses_path}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=512)
+    parser.add_argument("--output", type=str, default="math/benchmark/results/responses.jsonl",
+                        help="Path to write responses JSONL")
     args = parser.parse_args()
     run(args)

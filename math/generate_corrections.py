@@ -317,6 +317,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", type=int, default=10_000,
                         help="Stop after this many corrections are saved")
-    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--batch-size", type=int, default=512)
     args = parser.parse_args()
     run(args)

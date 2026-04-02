@@ -37,7 +37,7 @@ Output: `math/datasets/combined/train.parquet` and `math/datasets/combined/test.
 bash math/benchmark/serve.sh
 ```
 
-Serves `deepseek-ai/DeepSeek-R1-Distill-Qwen-32B` on port 8000 with tensor-parallel-size 2 across 2x H100s (~33GB per GPU). The `<think>` block is parsed from the response content by splitting on `</think>`.
+Serves `deepseek-ai/DeepSeek-R1-Distill-Qwen-32B` on port 8000 with tensor-parallel-size 8 across 8x H100s (~8GB per GPU for weights, ~72GB free per GPU for KV cache). The `<think>` block is parsed from the response content by splitting on `</think>`.
 
 Wait for `Application startup complete` before sending requests.
 
@@ -60,7 +60,7 @@ python math/benchmark/test_generation.py
 ### 2. Run inference (resumable)
 ```bash
 # Quick test
-python math/benchmark/infer.py --limit 1000 --batch-size 2
+python math/benchmark/infer.py --limit 1000 --batch-size 128
 
 # Full test set
 python math/benchmark/infer.py --batch-size 64
@@ -68,7 +68,7 @@ python math/benchmark/infer.py --batch-size 64
 
 Responses saved incrementally to `math/benchmark/results/responses.jsonl`. Re-running resumes from where it left off.
 
-`--batch-size` controls concurrent requests to the vLLM server. 64 is recommended given available KV cache headroom.
+`--batch-size` controls concurrent requests to the vLLM server. vLLM queues excess requests internally so there is no OOM risk — higher values keep the server fully saturated. Default is 512.
 
 ### 3. Evaluate
 ```bash
@@ -93,7 +93,7 @@ Requires vLLM server running.
 python math/generate_corrections.py --target 50
 
 # Full run (default: 10K corrections)
-python math/generate_corrections.py
+python math/generate_corrections.py --target 10000 --batchs-size 256
 ```
 
 Defaults: `--target 10000`, `--batch-size 128`

@@ -14,7 +14,7 @@ echo "Logs -> $LOG_FILE"
 
 .venv/bin/vllm serve "$MODEL_ID" \
     --download-dir "$CACHE_DIR" \
-    --tensor-parallel-size 2 \
+    --tensor-parallel-size 8 \
     --dtype bfloat16 \
     --port "$PORT" \
     --served-model-name deepseek-r1-32b  

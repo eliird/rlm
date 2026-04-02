@@ -19,12 +19,31 @@ RESULTS_DIR = Path("math/benchmark/results")
 
 
 def extract_boxed(text: str) -> str:
-    match = re.search(r"\\boxed\{(.+?)\}", text)
-    return match.group(1).strip() if match else ""
+    """Extract content from \\boxed{}, handling nested braces."""
+    idx = text.find(r"\boxed{")
+    if idx == -1:
+        return ""
+    start = idx + len(r"\boxed{")
+    depth = 1
+    i = start
+    while i < len(text) and depth > 0:
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+        i += 1
+    return text[start:i - 1].strip()
 
 
 def normalize(ans: str) -> str:
-    return ans.strip().replace(" ", "").lower()
+    ans = ans.strip().lower()
+    ans = ans.replace(" ", "")
+    # Treat display/text variants as equivalent
+    ans = ans.replace("\\dfrac", "\\frac")
+    ans = ans.replace("\\tfrac", "\\frac")
+    ans = ans.replace("\\left(", "(").replace("\\right)", ")")
+    ans = ans.replace("\\left[", "[").replace("\\right]", "]")
+    return ans
 
 
 def is_correct(predicted: str, expected: str) -> bool:

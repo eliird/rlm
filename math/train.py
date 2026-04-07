@@ -1,16 +1,17 @@
 """
 Finetune DeepSeek-R1-Distill-Qwen-32B on error-correction data.
 
-Full finetune (no LoRA), FSDP across all available GPUs.
+Full finetune (no LoRA), DeepSpeed ZeRO-3 across all 8 GPUs.
 Freezes embed_tokens and lm_head — trains all transformer layers.
 
-Run:
-  accelerate launch --config_file math/fsdp_config.yaml math/train.py \
+Run from repo root:
+  deepspeed --num_gpus=8 math/train.py \
     [--epochs N] [--output-dir PATH] [--data PATH]
 """
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import torch
@@ -20,17 +21,35 @@ from transformers import (
     AutoModelForCausalLM,
     TrainingArguments,
     Trainer,
+    TrainerCallback,
+    TrainerControl,
+    TrainerState,
 )
+
+
+class MemoryLogCallback(TrainerCallback):
+    """Log GPU memory usage at each logging step (rank 0 only)."""
+
+    def on_log(self, args, state: TrainerState, control: TrainerControl, **kwargs):
+        if not torch.cuda.is_available():
+            return
+        if int(os.environ.get("LOCAL_RANK", 0)) != 0:
+            return
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        peak = torch.cuda.max_memory_allocated() / 1024**3
+        print(f"  [mem] allocated={allocated:.1f}GB  reserved={reserved:.1f}GB  peak={peak:.1f}GB")
+
 
 MODEL_ID = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
 CACHE_DIR = "/data/cache/huggingface/hub"
 
-MAX_LENGTH = 8192
+MAX_LENGTH = 2048
 BATCH_SIZE_PER_GPU = 1
 GRAD_ACCUM_STEPS = 16
 LR = 1e-5
 WEIGHT_DECAY = 0.01
-WARMUP_STEPS = 100
+WARMUP_STEPS = 10
 
 
 def build_assistant_content(rec: dict) -> str:
@@ -48,6 +67,9 @@ class CorrectionDataset(Dataset):
                 rec = json.loads(line)
                 if "think" in rec and "response" in rec and "\\boxed{" in rec["response"]:
                     self.examples.append(rec)
+
+        if int(os.environ.get("LOCAL_RANK", 0)) == 0:
+            print(f"Loaded {len(self.examples)} training examples from {path}")
 
     def __len__(self):
         return len(self.examples)
@@ -68,6 +90,7 @@ class CorrectionDataset(Dataset):
         input_ids = full[: self.max_length]
         prefix_len = len(user_only)
 
+        # Mask prompt tokens from loss — only train on assistant response
         labels = [-100] * prefix_len + input_ids[prefix_len:]
         labels = labels[: self.max_length]
 
@@ -85,12 +108,9 @@ class CorrectionDataset(Dataset):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--epochs", type=int, default=2,
-                        help="Number of training epochs (default: 2)")
-    parser.add_argument("--output-dir", type=str, default="math/checkpoints",
-                        help="Directory to save the final checkpoint")
-    parser.add_argument("--data", type=str, default="math/data/corrections.jsonl",
-                        help="Path to corrections JSONL file")
+    parser.add_argument("--epochs", type=int, default=2)
+    parser.add_argument("--output-dir", type=str, default="math/checkpoints")
+    parser.add_argument("--data", type=str, default="math/data/corrections.jsonl")
     return parser.parse_args()
 
 
@@ -102,6 +122,7 @@ def main():
 
     dataset = CorrectionDataset(Path(args.data), tokenizer, MAX_LENGTH)
 
+    # ZeRO-3 initializes and shards the model across GPUs automatically
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
         cache_dir=CACHE_DIR,
@@ -124,20 +145,20 @@ def main():
         warmup_steps=WARMUP_STEPS,
         lr_scheduler_type="cosine",
         bf16=True,
-
+        optim="adamw_torch",
+        deepspeed="math/deepspeed_config.json",
         logging_steps=10,
-        save_strategy="no",        # save only at end of training, not per epoch
+        save_strategy="epoch",
         dataloader_num_workers=2,
         dataloader_pin_memory=True,
         remove_unused_columns=False,
-        fsdp="full_shard auto_wrap",
-        fsdp_config="math/fsdp_config.json",
     )
 
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=dataset,
+        callbacks=[MemoryLogCallback()],
     )
     trainer.train()
     trainer.save_model(args.output_dir)

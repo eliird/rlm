@@ -1,9 +1,10 @@
 #!/bin/bash
-# RLM training loop: 3 iterations of
+# RLM training loop: N iterations of
 #   serve -> infer (1000) -> eval -> generate (10k) -> train (2 epochs) -> stop server
 #
 # Checkpoints : math/checkpoints/iter_{N}/
-# Generated data: math/data/iter_{N}_corrections.jsonl
+# Corrections : math/data/iter_{N}_corrections.jsonl
+# Responses   : math/benchmark/results/iter_{N}_responses.jsonl
 #
 # Run from repo root: bash math/rlm_loop.sh
 
@@ -13,7 +14,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 PYTHON=".venv/bin/python"
-ACCELERATE=".venv/bin/accelerate"
+DEEPSPEED=".venv/bin/deepspeed"
 
 ITERATIONS=3
 TRAIN_EPOCHS=2
@@ -70,10 +71,8 @@ stop_server() {
     if [ -f "$SERVER_PID_FILE" ]; then
         local pid
         pid=$(cat "$SERVER_PID_FILE")
-        # Kill the process group so all child processes are cleaned up
         kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
         rm -f "$SERVER_PID_FILE"
-        # Wait for GPU memory to be released
         sleep 10
         echo "    Server stopped."
     else
@@ -96,40 +95,35 @@ for ITER in $(seq 1 $ITERATIONS); do
 
     DATA_PATH="math/data/iter_${ITER}_corrections.jsonl"
     CKPT_DIR="math/checkpoints/iter_${ITER}"
-    INFER_OUT="math/benchmark/results/iter_${ITER}_responses.jsonl"
-    EVAL_OUT="math/benchmark/results/iter_${ITER}_eval"
-
-    # If this is iteration > 1, the serve script should load the previous checkpoint.
-    # For now we load from HF cache (base model) and rely on the trained checkpoint
-    # being used in future iterations manually — see note at bottom.
+    RESPONSES_PATH="math/benchmark/results/iter_${ITER}_responses.jsonl"
 
     # ── 1. Start server ──────────────────────────────────────────────────────
     start_server
 
-    # ── 2. Inference on 1000 random test items ───────────────────────────────
+    # ── 2. Inference on test set ─────────────────────────────────────────────
     echo ""
     echo "--> [${ITER}] Inference (limit=${INFER_LIMIT}, batch=${INFER_BATCH})..."
+    RESPONSES_PATH="$RESPONSES_PATH" \
     $PYTHON math/benchmark/infer.py \
         --limit "$INFER_LIMIT" \
-        --batch-size "$INFER_BATCH" \
-        --output "$INFER_OUT"
+        --batch-size "$INFER_BATCH"
 
     # ── 3. Evaluate ──────────────────────────────────────────────────────────
     echo ""
     echo "--> [${ITER}] Evaluating..."
-    $PYTHON math/benchmark/evaluate.py \
-        --input "$INFER_OUT" \
-        --output-dir "$EVAL_OUT"
+    $PYTHON math/benchmark/evaluate.py
 
     # ── 4. Generate corrections ───────────────────────────────────────────────
     echo ""
     echo "--> [${ITER}] Generating corrections (target=${GEN_TARGET}, batch=${GEN_BATCH})..."
     $PYTHON math/generate_corrections.py \
         --target "$GEN_TARGET" \
-        --batch-size "$GEN_BATCH" \
-        --output "$DATA_PATH"
+        --batch-size "$GEN_BATCH"
 
-    # ── 5. Stop server ────────────────────────────────────────────────────────
+    # Copy to per-iteration path for record keeping
+    cp math/data/corrections.jsonl "$DATA_PATH"
+
+    # ── 5. Stop server before training ───────────────────────────────────────
     stop_server
 
     # ── 6. Space check before writing checkpoint ──────────────────────────────
@@ -138,8 +132,7 @@ for ITER in $(seq 1 $ITERATIONS); do
     # ── 7. Train ──────────────────────────────────────────────────────────────
     echo ""
     echo "--> [${ITER}] Training (epochs=${TRAIN_EPOCHS})..."
-    $ACCELERATE launch \
-        --config_file math/fsdp_config.json \
+    $DEEPSPEED --num_gpus=8 \
         math/train.py \
         --epochs "$TRAIN_EPOCHS" \
         --output-dir "$CKPT_DIR" \

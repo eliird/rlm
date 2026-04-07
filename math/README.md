@@ -42,8 +42,8 @@ python math/generate_corrections.py --target 10000 --batch-size 512 --output mat
 
 ### Train
 ```bash
-accelerate launch --config_file math/fsdp_config.json math/train.py \
+deepspeed --num_gpus=8 math/train.py \
   --epochs 2 \
   --output-dir math/checkpoints/iter_1 \
-  --data math/data/iter_1_corrections.jsonl
+  --data math/data/corrections.jsonl
 ```

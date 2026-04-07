@@ -44,12 +44,12 @@ class MemoryLogCallback(TrainerCallback):
 MODEL_ID = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
 CACHE_DIR = "/data/cache/huggingface/hub"
 
-MAX_LENGTH = 2048
+MAX_LENGTH = 4096
 BATCH_SIZE_PER_GPU = 1
 GRAD_ACCUM_STEPS = 16
 LR = 1e-5
 WEIGHT_DECAY = 0.01
-WARMUP_STEPS = 10
+WARMUP_STEPS = 50
 
 
 def build_assistant_content(rec: dict) -> str:
@@ -145,7 +145,7 @@ def main():
         warmup_steps=WARMUP_STEPS,
         lr_scheduler_type="cosine",
         bf16=True,
-        optim="adamw_torch",
+        optim="adamw_hf",
         deepspeed="math/deepspeed_config.json",
         logging_steps=10,
         save_strategy="epoch",

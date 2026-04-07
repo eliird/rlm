@@ -117,7 +117,7 @@ def chat(messages: list[dict], max_tokens: int = 32768) -> tuple[str, str] | Non
         "max_tokens": max_tokens,
     }
     try:
-        resp = requests.post(SERVER_URL, json=payload, timeout=300)
+        resp = requests.post(SERVER_URL, json=payload, timeout=600)
         resp.raise_for_status()
         content = (resp.json()["choices"][0]["message"].get("content") or "").strip()
         # vLLM strips <think> but leaves </think> — split on it

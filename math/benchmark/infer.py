@@ -38,15 +38,18 @@ def load_existing(path: Path) -> set[int]:
 
 
 
-def query(problem: str, max_tokens: int = 32768) -> tuple[str, str]:
-    """Returns (thinking, final_response)."""
+def query(problem: str, max_tokens: int = 32768) -> tuple[str, str] | None:
+    """Returns (thinking, final_response), or None on timeout."""
     payload = {
         "model": MODEL_NAME,
         "messages": [{"role": "user", "content": problem + "\n\nSolve the problem step by step. Put your final answer in \\boxed{} at the end."}],
         "max_tokens": max_tokens,
     }
-    resp = requests.post(SERVER_URL, json=payload, timeout=300)
-    resp.raise_for_status()
+    try:
+        resp = requests.post(SERVER_URL, json=payload, timeout=600)
+        resp.raise_for_status()
+    except requests.exceptions.Timeout:
+        return None
     content = (resp.json()["choices"][0]["message"].get("content") or "").strip()
     if "</think>" in content:
         thinking, response = content.split("</think>", 1)
@@ -92,8 +95,11 @@ def run(args):
     def fetch(idx_row):
         idx, row = idx_row
         t0 = time.time()
-        thinking, response = query(row["problem"])
+        result = query(row["problem"])
         elapsed = time.time() - t0
+        if result is None:
+            return None, elapsed
+        thinking, response = result
         return {
             "idx": int(idx),
             "source": row["source"],
@@ -101,8 +107,7 @@ def run(args):
             "answer": row["answer"],
             "thinking": thinking,
             "response": response,
-            "_elapsed": elapsed,
-        }
+        }, elapsed
 
     # Keep a rolling window of args.batch_size concurrent requests.
     # Uses wait(FIRST_COMPLETED) so whichever request finishes first is
@@ -121,11 +126,11 @@ def run(args):
         while in_flight:
             done, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
             for future in done:
-                record = future.result()
-                elapsed = record.pop("_elapsed")
-                out_file.write(json.dumps(record) + "\n")
-                out_file.flush()
-                pbar.set_postfix({"last_s": f"{elapsed:.1f}s", "in_flight": len(in_flight)})
+                record, elapsed = future.result()
+                if record is not None:
+                    out_file.write(json.dumps(record) + "\n")
+                    out_file.flush()
+                pbar.set_postfix({"last_s": f"{elapsed:.1f}s", "in_flight": len(in_flight), "timeout": record is None})
                 pbar.update(1)
 
                 # Immediately submit next to keep pool full

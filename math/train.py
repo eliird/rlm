@@ -134,7 +134,7 @@ def main():
         gradient_checkpointing=True,
         deepspeed="math/deepspeed_config.json",
         logging_steps=10,
-        save_strategy="epoch",
+        save_strategy="no",
         dataloader_num_workers=2,
         dataloader_pin_memory=True,
         remove_unused_columns=False,
@@ -147,6 +147,7 @@ def main():
     )
     trainer.train()
     trainer.save_model(args.output_dir)
+    tokenizer.save_pretrained(args.output_dir)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,8 @@
 # Logs are written to math/benchmark/logs/vllm_serve.log
 
 BASE_MODEL_ID="deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
-MODEL_ID="${1:-$BASE_MODEL_ID}"
+MODEL_ID="${1:-}"
+MODEL_ID="${MODEL_ID:-$BASE_MODEL_ID}"
 CACHE_DIR="/data/cache/huggingface/hub"
 PORT=8000
 LOG_DIR="math/benchmark/logs"

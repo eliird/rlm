@@ -6,3 +6,4 @@ data/
 __pycache__
 secrets.sh
 ai-math
+math/checkpoints

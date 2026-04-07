@@ -26,21 +26,6 @@ from transformers import (
     TrainerState,
 )
 
-
-class MemoryLogCallback(TrainerCallback):
-    """Log GPU memory usage at each logging step (rank 0 only)."""
-
-    def on_log(self, args, state: TrainerState, control: TrainerControl, **kwargs):
-        if not torch.cuda.is_available():
-            return
-        if int(os.environ.get("LOCAL_RANK", 0)) != 0:
-            return
-        allocated = torch.cuda.memory_allocated() / 1024**3
-        reserved = torch.cuda.memory_reserved() / 1024**3
-        peak = torch.cuda.max_memory_allocated() / 1024**3
-        print(f"  [mem] allocated={allocated:.1f}GB  reserved={reserved:.1f}GB  peak={peak:.1f}GB")
-
-
 MODEL_ID = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
 CACHE_DIR = "/data/cache/huggingface/hub"
 
@@ -111,6 +96,7 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--output-dir", type=str, default="math/checkpoints")
     parser.add_argument("--data", type=str, default="math/data/corrections.jsonl")
+    parser.add_argument("--local_rank", type=int, default=-1)  # injected by deepspeed launcher
     return parser.parse_args()
 
 
@@ -126,7 +112,7 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
         cache_dir=CACHE_DIR,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         use_cache=False,
     )
 
@@ -145,7 +131,7 @@ def main():
         warmup_steps=WARMUP_STEPS,
         lr_scheduler_type="cosine",
         bf16=True,
-        optim="adamw_hf",
+        gradient_checkpointing=True,
         deepspeed="math/deepspeed_config.json",
         logging_steps=10,
         save_strategy="epoch",
@@ -158,7 +144,6 @@ def main():
         model=model,
         args=training_args,
         train_dataset=dataset,
-        callbacks=[MemoryLogCallback()],
     )
     trainer.train()
     trainer.save_model(args.output_dir)

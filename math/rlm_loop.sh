@@ -46,9 +46,10 @@ check_space() {
 }
 
 start_server() {
-    echo "==> Starting vLLM server..."
+    local model_path="${1:-}"
+    echo "==> Starting vLLM server (model: ${model_path:-base})..."
     mkdir -p "$(dirname "$SERVER_LOG")"
-    nohup bash math/benchmark/serve.sh > "$SERVER_LOG" 2>&1 &
+    nohup bash math/benchmark/serve.sh $model_path > "$SERVER_LOG" 2>&1 &
     echo $! > "$SERVER_PID_FILE"
     echo "    Server PID: $(cat $SERVER_PID_FILE) | log: $SERVER_LOG"
 
@@ -97,8 +98,12 @@ for ITER in $(seq 1 $ITERATIONS); do
     CKPT_DIR="math/checkpoints/iter_${ITER}"
     RESPONSES_PATH="math/benchmark/results/iter_${ITER}_responses.jsonl"
 
-    # ── 1. Start server ──────────────────────────────────────────────────────
-    start_server
+    # ── 1. Start server (use previous iteration's checkpoint, base model for iter 1) ──
+    PREV_CKPT=""
+    if [ "$ITER" -gt 1 ]; then
+        PREV_CKPT="math/checkpoints/iter_$((ITER - 1))"
+    fi
+    start_server "$PREV_CKPT"
 
     # ── 2. Inference on test set ─────────────────────────────────────────────
     echo ""
@@ -132,6 +137,7 @@ for ITER in $(seq 1 $ITERATIONS); do
     # ── 7. Train ──────────────────────────────────────────────────────────────
     echo ""
     echo "--> [${ITER}] Training (epochs=${TRAIN_EPOCHS})..."
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     $DEEPSPEED --num_gpus=8 \
         math/train.py \
         --epochs "$TRAIN_EPOCHS" \

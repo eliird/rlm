@@ -8,3 +8,5 @@ secrets.sh
 ai-math
 math/checkpoints
 .claude
+sentence-lm/data
+sentence-lm/bert_weights

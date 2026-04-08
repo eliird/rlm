@@ -302,6 +302,53 @@ class GPT(nn.Module):
         mfu = flops_achieved / flops_promised
         return mfu
 
+    @classmethod
+    def from_local(cls, weights_dir, override_args=None):
+        """Load GPT-2 weights from a local directory (pytorch_model.bin)."""
+        from pathlib import Path
+        import json
+
+        weights_dir = Path(weights_dir)
+        override_args = override_args or {}
+
+        with open(weights_dir / "config.json") as f:
+            hf_config = json.load(f)
+
+        config_args = dict(
+            n_layer=hf_config["n_layer"],
+            n_head=hf_config["n_head"],
+            n_embd=hf_config["n_embd"],
+            block_size=hf_config["n_positions"],
+            vocab_size=hf_config["vocab_size"],
+            bias=True,
+        )
+        if "dropout" in override_args:
+            config_args["dropout"] = override_args["dropout"]
+
+        config = GPTConfig(**config_args)
+        model = cls(config)
+        sd = model.state_dict()
+
+        sd_hf = torch.load(weights_dir / "pytorch_model.bin", map_location="cpu", weights_only=True)
+
+        # Keys that need Conv1D → Linear transpose
+        transposed = {"attn.c_attn.weight", "attn.c_proj.weight", "mlp.c_fc.weight", "mlp.c_proj.weight"}
+
+        for k, v in sd_hf.items():
+            # Skip causal mask buffers
+            if k.endswith(".attn.bias") or k.endswith(".attn.masked_bias"):
+                continue
+            target_key = f"transformer.{k}"
+            if target_key not in sd:
+                continue
+            if any(k.endswith(t) for t in transposed):
+                sd[target_key].copy_(v.t())
+            else:
+                sd[target_key].copy_(v)
+
+        model.load_state_dict(sd)
+        return model
+
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
         """
@@ -328,3 +375,25 @@ class GPT(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
 
         return idx
+
+
+if __name__ == "__main__":
+    from transformers import GPT2Tokenizer
+
+    tokenizer = GPT2Tokenizer.from_pretrained("sentence-lm/gpt2_weights")
+    model = GPT.from_local("sentence-lm/gpt2_weights")
+    model.eval()
+
+    prompts = [
+        "The meaning of life is",
+        "In a distant galaxy, the last star",
+        "def fibonacci(n):",
+    ]
+
+    for prompt in prompts:
+        ids = tokenizer.encode(prompt, return_tensors="pt")
+        out = model.generate(ids, max_new_tokens=40, temperature=0.8, top_k=40)
+        text = tokenizer.decode(out[0])
+        print(f"Prompt: {prompt}")
+        print(f"Output: {text}")
+        print()

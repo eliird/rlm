@@ -65,5 +65,5 @@ bash math/benchmark/serve.sh math/checkpoints/iter_1
 python math/benchmark/infer.py --limit 1000 --output math/benchmark/results/iter1_responses.jsonl
 # stop server (Ctrl+C)
 python math/benchmark/evaluate.py --input math/benchmark/results/iter1_responses.jsonl --output-dir math/benchmark/results/iter1
-Results will be in math/benchmark/results/baseline/eval_summary.txt and math/benchmark/results/iter1/eval_summary.txt.
+# Results will be in math/benchmark/results/baseline/eval_summary.txt and math/benchmark/results/iter1/eval_summary.txt.
 ```

@@ -1,4 +1,4 @@
-# Math Error-Correction Finetuning on gpt-oss-120b
+# Math Error-Correction Finetuning on deepseek-qwen-32b
 
 ## Overview
 
@@ -6,18 +6,8 @@ This project builds a targeted error-correction finetuning pipeline on top of **
 
 ---
 
-## Target Model: gpt-oss-120b
+## Target Model: deepseep-qwen-32b model
 
-| Property | Detail |
-|---|---|
-| Architecture | Mixture-of-Experts (MoE) |
-| Total Parameters | 117B |
-| Active Parameters | 5.1B per token |
-| License | Apache 2.0 |
-| Context Window | 128K tokens |
-| Reasoning | Configurable (low / medium / high) |
-| Format | Harmony chat format (required) |
-| Hardware | Single H100 80GB GPU |
 
 ### Known Weaknesses (Target Areas)
 - **Adaptive reasoning**: Scores ~61% on modified/novel problems — confuses pattern recognition for genuine reasoning

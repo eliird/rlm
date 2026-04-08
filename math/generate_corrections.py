@@ -275,15 +275,15 @@ def run(args: argparse.Namespace):
                 elif record == "invalid":
                     stats["invalid"] += 1
                 else:
-                    # Valid record: has think block and boxed answer in response
-                    has_box = bool(extract_boxed(record["response"]))
-                    if has_box:
+                    # Valid record only if boxed answer matches ground truth
+                    corrected_answer = extract_boxed(record["response"])
+                    if corrected_answer and is_correct(corrected_answer, record["correct_answer"]):
                         stats["corrected"] += 1
                         pbar.update(1)
+                        out_file.write(json.dumps(record) + "\n")
+                        out_file.flush()
                     else:
                         stats["invalid"] += 1
-                    out_file.write(json.dumps(record) + "\n")
-                    out_file.flush()
 
                 pbar.set_postfix({
                     "correct": stats["correct"],

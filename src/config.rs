@@ -11,6 +11,7 @@ const DEFAULT_REMOTE_WORK_DIR: &str = "/data/work/irdali.durrani";
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config{
     pub local_repo: String,
+    pub submodules: Vec<String>,
     pub servers: Vec<String>,
     pub default_server: Option<String>,
     pub remote_work_dir: String,
@@ -37,6 +38,7 @@ impl Config{
                 .expect("Failed to get current directory")
                 .to_string_lossy()
                 .into_owned(),
+            submodules: Vec::new(),
             servers: Vec::new(),
             default_server: None,
             remote_work_dir: DEFAULT_REMOTE_WORK_DIR.to_string(),

@@ -1,5 +1,7 @@
 mod config;
+mod git;
 use config::Config;
+use git::Git;
 use clap::{Parser, ValueEnum, Subcommand};
 
 #[derive(Parser)]
@@ -20,6 +22,19 @@ enum Commands{
         #[command(subcommand)]
         command: RemoteDirCommands,
     },
+    Submodules {
+        #[command(subcommand)]
+        command: SubmoduleCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum SubmoduleCommands {
+    List,
+    Update,
+    Add { url: String, path: String },
+    Remove { path: String },
+    Pull,
 }
 
 #[derive(Subcommand)]
@@ -43,6 +58,7 @@ fn main(){
     match cli.command{
         Commands::Init => {
             Config::init();
+            Git::init_if_needed(&std::env::current_dir().unwrap());
         }
         Commands::Status => {
             let cfg = Config::load();
@@ -106,6 +122,38 @@ fn main(){
                     cfg.servers = servers;
                     cfg.save();
                     println!("Servers saved to config.");
+                }
+            }
+        }
+        Commands::Submodules { command } => {
+            let cfg = Config::load();
+            let repo_path = std::path::PathBuf::from(&cfg.local_repo);
+            match command {
+                SubmoduleCommands::List => {
+                    let subs = Git::get_submodules(&repo_path);
+                    if subs.is_empty() {
+                        println!("No submodules found.");
+                    } else {
+                        for s in subs {
+                            println!("{}", s);
+                        }
+                    }
+                }
+                SubmoduleCommands::Update => {
+                    Git::submodule_update(&repo_path);
+                    println!("Submodules updated.");
+                }
+                SubmoduleCommands::Add { url, path } => {
+                    Git::submodule_add(&repo_path, &url, &path);
+                    println!("Submodule '{}' added.", path);
+                }
+                SubmoduleCommands::Remove { path } => {
+                    Git::submodule_remove(&repo_path, &path);
+                    println!("Submodule '{}' removed.", path);
+                }
+                SubmoduleCommands::Pull => {
+                    Git::submodule_pull(&repo_path);
+                    println!("Submodules pulled.");
                 }
             }
         }

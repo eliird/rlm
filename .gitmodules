@@ -1,3 +1,0 @@
-[submodule "infer"]
-	path = infer
-	url = ssh://git@repos.fixstars.com:2222/aibooster/develop/internal/infer.git

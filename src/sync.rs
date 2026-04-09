@@ -191,6 +191,33 @@ impl Sync {
         }
     }
 
+    // List subdirectories in remote_dir on the server
+    pub fn list_remote_dirs(server: &str, remote_dir: &str) -> Vec<String> {
+        let output = Command::new("ssh")
+            .args([server, &format!("ls -1d {}/*/ 2>/dev/null | xargs -I{{}} basename {{}}", remote_dir)])
+            .output()
+            .expect("Failed to run ssh");
+        if !output.status.success() {
+            return Vec::new();
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.trim().to_string())
+            .collect()
+    }
+
+    pub fn remove_remote_dir(server: &str, remote_path: &str) {
+        let status = Command::new("ssh")
+            .args([server, &format!("rm -rf {}", remote_path)])
+            .status()
+            .expect("Failed to run ssh");
+        if !status.success() {
+            eprintln!("Failed to remove '{}' on server.", remote_path);
+            std::process::exit(1);
+        }
+    }
+
     pub fn push(local_path: &PathBuf, server: &str, remote_path: &str, force: bool, excludes: &[String], max_file_size_mb: u64) {
         if !force && !Self::check_local_clean(local_path) {
             std::process::exit(1);

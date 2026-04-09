@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 const CONFIG_DIR: &str = ".synch_tool";
 const CONFIG_FILE: &str = "config.json";
 
-const DEFAULT_REMOTE_WORK_DIR: &str = "/data/work/irdali.durrani";
+const DEFAULT_REMOTE_WORK_DIR: &str = "/data/work/irdali.durrani/work";
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config{

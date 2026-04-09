@@ -7,6 +7,7 @@ use git::Git;
 use sync::Sync;
 use claude::Claude;
 use clap::{Parser, Subcommand};
+use std::io::BufRead;
 
 #[derive(Parser)]
 struct Cli{
@@ -167,7 +168,24 @@ fn main(){
             let repo_path = std::path::PathBuf::from(&cfg.local_repo);
             let submodules = match submodule {
                 Some(name) => vec![name],
-                None => Git::get_submodules(&repo_path),
+                None => {
+                    let local_subs = Git::get_submodules(&repo_path);
+                    // Check for remote dirs that no longer exist locally
+                    let remote_dirs = Sync::list_remote_dirs(&server, &cfg.remote_work_dir);
+                    for remote_dir in &remote_dirs {
+                        if !local_subs.contains(remote_dir) {
+                            eprint!("'{}' exists on server but not locally. Remove from server? [y/N] ", remote_dir);
+                            let mut input = String::new();
+                            std::io::stdin().read_line(&mut input).unwrap();
+                            if input.trim().eq_ignore_ascii_case("y") {
+                                let remote_path = format!("{}/{}", cfg.remote_work_dir, remote_dir);
+                                Sync::remove_remote_dir(&server, &remote_path);
+                                println!("Removed '{}' from server.", remote_dir);
+                            }
+                        }
+                    }
+                    local_subs
+                }
             };
             if submodules.is_empty() {
                 eprintln!("No submodules found.");

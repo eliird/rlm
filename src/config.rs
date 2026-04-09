@@ -1,6 +1,5 @@
 
 use std::{fs, path::PathBuf};
-use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 
 const CONFIG_DIR: &str = ".synch_tool";
@@ -19,17 +18,37 @@ pub struct Config{
 
 impl Config{
 
-    fn get_config_path() -> PathBuf{
+    // For init: always use current directory
+    fn init_config_path() -> PathBuf {
         std::env::current_dir()
             .expect("Failed to get current directory")
             .join(CONFIG_DIR)
             .join(CONFIG_FILE)
     }
 
+    // For load/save: walk up from current directory to find config
+    fn find_config_path() -> Option<PathBuf> {
+        let mut dir = std::env::current_dir().expect("Failed to get current directory");
+        loop {
+            let candidate = dir.join(CONFIG_DIR).join(CONFIG_FILE);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+            if !dir.pop() {
+                return None;
+            }
+        }
+    }
+
     pub fn init() -> Self {
-        let config_path = Self::get_config_path();
+        let config_path = Self::init_config_path();
         if config_path.exists() {
             eprintln!("Already initialized. Config already exists at {:?}", config_path);
+            std::process::exit(1);
+        }
+        if let Some(parent_config) = Self::find_config_path() {
+            eprintln!("Warning: a parent directory is already initialized at {:?}", parent_config);
+            eprintln!("Run `synch-tool init --force` or initialize from the root directory.");
             std::process::exit(1);
         }
         fs::create_dir_all(config_path.parent().unwrap()).expect("Failed to create config directory");
@@ -39,7 +58,7 @@ impl Config{
                 .to_string_lossy()
                 .into_owned(),
             submodules: Vec::new(),
-            servers: Vec::new(),
+            servers: Self::parse_ssh_config(),
             default_server: None,
             remote_work_dir: DEFAULT_REMOTE_WORK_DIR.to_string(),
         };
@@ -76,17 +95,20 @@ impl Config{
     }
 
     pub fn save(&self) {
-        let config_path = Self::get_config_path();
+        let config_path = Self::find_config_path()
+            .expect("Config not found. Run `synch-tool init` first.");
         let json = serde_json::to_string_pretty(self).expect("Failed to serialize config");
         fs::write(&config_path, json).expect("Failed to write config file");
     }
 
     pub fn load() -> Self {
-        let config_path = Self::get_config_path();
-        if !config_path.exists() {
-            eprintln!("Not initialized. Run `synch-tool init` first.");
-            std::process::exit(1);
-        }
+        let config_path = match Self::find_config_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("Not initialized. Run `synch-tool init` first.");
+                std::process::exit(1);
+            }
+        };
         let contents = fs::read_to_string(&config_path).expect("Failed to read config file");
         serde_json::from_str(&contents).expect("Failed to parse config file")
     }

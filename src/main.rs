@@ -1,9 +1,11 @@
 mod config;
 mod git;
 mod sync;
+mod claude;
 use config::Config;
 use git::Git;
 use sync::Sync;
+use claude::Claude;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -45,6 +47,11 @@ enum Commands{
         command: Vec<String>,
     },
     Ssh,
+    /// Install a Claude Code skill for st
+    InitClaude {
+        #[arg(long)]
+        global: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -166,7 +173,7 @@ fn main(){
                 let local_path = repo_path.join(sub);
                 let remote_path = format!("{}/{}", cfg.remote_work_dir, sub);
                 println!("Pushing '{}'...", sub);
-                Sync::push(&local_path, &server, &remote_path, force);
+                Sync::push(&local_path, &server, &remote_path, force, &cfg.excludes, cfg.max_file_size_mb);
             }
         }
         Commands::Pull { submodule, force } => {
@@ -191,7 +198,7 @@ fn main(){
                 let local_path = repo_path.join(sub);
                 let remote_path = format!("{}/{}", cfg.remote_work_dir, sub);
                 println!("Pulling '{}'...", sub);
-                Sync::pull(&local_path, &server, &remote_path, force);
+                Sync::pull(&local_path, &server, &remote_path, force, &cfg.excludes, cfg.max_file_size_mb);
             }
         }
         Commands::Exec { command } => {
@@ -204,6 +211,9 @@ fn main(){
                 }
             };
             Sync::exec(&server, &cfg.remote_work_dir, &command.join(" "));
+        }
+        Commands::InitClaude { global } => {
+            Claude::init_skill(global);
         }
         Commands::Ssh => {
             let cfg = Config::load();

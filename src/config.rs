@@ -14,6 +14,8 @@ pub struct Config{
     pub servers: Vec<String>,
     pub default_server: Option<String>,
     pub remote_work_dir: String,
+    pub excludes: Vec<String>,
+    pub max_file_size_mb: u64,
 }
 
 impl Config{
@@ -61,6 +63,16 @@ impl Config{
             servers: Self::parse_ssh_config(),
             default_server: None,
             remote_work_dir: DEFAULT_REMOTE_WORK_DIR.to_string(),
+            max_file_size_mb: 5,
+            excludes: vec![
+                ".venv/".to_string(),
+                "venv/".to_string(),
+                "env/".to_string(),
+                ".env/".to_string(),
+                "__pycache__/".to_string(),
+                "*.pyc".to_string(),
+                ".conda/".to_string(),
+            ],
         };
         let json = serde_json::to_string_pretty(&config).expect("Failed to serialize config");
         fs::write(&config_path, json).expect("Failed to write config file");

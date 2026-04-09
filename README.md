@@ -19,3 +19,9 @@ A CLI tool for syncing local repos to remote servers.
 | `submodules add <url> <path>` | Add a new submodule |
 | `submodules remove <path>` | Remove a submodule |
 | `submodules pull` | Pull latest changes in all submodules |
+| `push [submodule] [--force]` | Rsync submodule(s) to default server, with dirty and commit checks |
+| `pull [submodule] [--force]` | Rsync submodule(s) from default server, with dirty and commit checks |
+| `exec <command>` | Run a command on the default server in the remote working directory |
+| `ssh` | Open a shell on the default server |
+| `init-claude` | Install a Claude Code skill for st in the current project |
+| `init-claude --global` | Install a Claude Code skill for st globally for all projects |

@@ -9,6 +9,13 @@ use claude::Claude;
 use clap::{Parser, Subcommand};
 use std::io::BufRead;
 
+fn require_remote_dir(cfg: &config::Config) {
+    if cfg.remote_work_dir.is_empty() {
+        eprintln!("Remote working directory is not set. Run `st remote-dir set <path>` first.");
+        std::process::exit(1);
+    }
+}
+
 #[derive(Parser)]
 struct Cli{
     #[command(subcommand)]
@@ -158,6 +165,7 @@ fn main(){
         }
         Commands::Push { submodule, force } => {
             let cfg = Config::load();
+            require_remote_dir(&cfg);
             let server = match &cfg.default_server {
                 Some(s) => s.clone(),
                 None => {
@@ -200,6 +208,7 @@ fn main(){
         }
         Commands::Pull { submodule, force } => {
             let cfg = Config::load();
+            require_remote_dir(&cfg);
             let server = match &cfg.default_server {
                 Some(s) => s.clone(),
                 None => {
@@ -236,6 +245,7 @@ fn main(){
         }
         Commands::Exec { command } => {
             let cfg = Config::load();
+            require_remote_dir(&cfg);
             let server = match &cfg.default_server {
                 Some(s) => s.clone(),
                 None => {

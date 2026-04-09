@@ -1,11 +1,9 @@
 
-use std::{fs, path::PathBuf};
+use std::{fs, io::{self, BufRead, Write}, path::PathBuf};
 use serde::{Deserialize, Serialize};
 
 const CONFIG_DIR: &str = ".synch_tool";
 const CONFIG_FILE: &str = "config.json";
-
-const DEFAULT_REMOTE_WORK_DIR: &str = "/data/work/irdali.durrani/work";
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config{
@@ -62,7 +60,7 @@ impl Config{
             submodules: Vec::new(),
             servers: Self::parse_ssh_config(),
             default_server: None,
-            remote_work_dir: DEFAULT_REMOTE_WORK_DIR.to_string(),
+            remote_work_dir: Self::prompt_remote_work_dir(),
             max_file_size_mb: 5,
             excludes: vec![
                 ".venv/".to_string(),
@@ -78,6 +76,14 @@ impl Config{
         fs::write(&config_path, json).expect("Failed to write config file");
         println!("Initialized config at {:?}", config_path);
         config
+    }
+
+    fn prompt_remote_work_dir() -> String {
+        print!("Remote working directory (leave blank to skip): ");
+        io::stdout().flush().unwrap();
+        let mut input = String::new();
+        io::stdin().lock().read_line(&mut input).unwrap();
+        input.trim().to_string()
     }
 
     pub fn parse_ssh_config() -> Vec<String> {

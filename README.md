@@ -9,8 +9,9 @@ Built for a workflow where Claude Code runs locally but compute lives on a remot
 - Edit everything locally, push/pull individual submodules to the server as needed
 - Keep a persistent tmux session on the server to retain conda/venv environments between commands
 - Guard against accidentally overwriting uncommitted work in either direction
+- Skills so claude can execute code remotely on the tmux session.
 
-If your flow is purely push-to-server → pull-from-git, `git remote` would be simpler. This tool is for when you want direct server↔local sync alongside your normal git workflow.
+If your flow is purely push-to-server → pull-from-git, `git remote` would be simpler. This tool is for when you want direct server↔local sync alongside your normal git workflow. Also convenient to not have to setup claude related skills and plugins on both local and remote machines.
 
 ## Installation
 
@@ -25,6 +26,55 @@ st <command> [args]
 ```
 
 Run `st status` to see the current config at any time.
+
+## Example Workflow
+
+Say you want a single folder that holds all your projects, kept in sync with a GPU server.
+
+```sh
+# Create a workspace and initialize st
+mkdir ~/work && cd ~/work
+st init
+# → prompts for remote working directory (e.g. /home/you/work on the server)
+# → auto-populates servers from ~/.ssh/config
+
+# Set your default server
+st servers default SBZ-H100-01
+
+# Add your repos as submodules
+st submodules add git@github.com:you/project-a.git project-a
+st submodules add git@github.com:you/project-b.git project-b
+
+# Push everything to the server
+st push
+
+# Make changes locally, push a specific repo
+cd project-a
+# ... edit files ...
+st push project-a
+
+# Activate your environment once in the persistent tmux session
+st run conda activate myenv
+
+# Run code remotely and stream output back
+st run python project-a/train.py
+
+# Drop into the tmux session to check on things interactively
+st ssh
+
+# Run a one-shot command (no tmux, just ssh)
+st exec nvidia-smi
+
+# Pull changes back from the server
+st pull project-a
+```
+
+With Claude Code, install the skill so Claude can run `st` commands for you:
+
+```sh
+st init-claude --global
+# Then in Claude Code: /st check GPUs on the server
+```
 
 ## Commands
 

@@ -68,8 +68,9 @@ Use the Bash tool to run `st` commands directly. Always run `st status` first if
 | `st submodules pull` | Pull latest in all submodules |
 | `st push [submodule] [--force]` | Rsync submodule(s) to default server |
 | `st pull [submodule] [--force]` | Rsync submodule(s) from default server |
-| `st exec <command>` | Run command on default server in remote_work_dir (streamed) |
-| `st ssh` | Open shell on default server |
+| `st exec <command>` | Run a one-shot command on default server in remote_work_dir (streamed) |
+| `st run <command>` | Run command in persistent `st` tmux session on default server, streams output back live |
+| `st ssh` | Attach to the `st` tmux session on default server (creates it if absent) |
 | `st init-claude [--global]` | Install this Claude skill |
 
 ## Safeguards
@@ -83,7 +84,7 @@ Use the Bash tool to run `st` commands directly. Always run `st status` first if
 
 - "push my changes" → run `st push`
 - "pull from server" → run `st pull`
-- "run X on the server" → run `st exec X`
+- "run X on the server" → use `st run X` for env-persistent execution (conda/venv retained), or `st exec X` for a quick one-shot command
 - "what's my config" → run `st status`
 - "add a submodule" → run `st submodules add <url> <path>`
 - If a command fails due to dirty state or diverged commits, explain what st reported and suggest next steps

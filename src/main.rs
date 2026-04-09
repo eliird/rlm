@@ -64,10 +64,16 @@ fn main(){
             }
         }
         Commands::Servers { command } => {
-            let cfg = Config::load();
             match command {
                 ServerCommands::Add { name } => {
-                    println!("{}", name);
+                    let mut cfg = Config::load();
+                    if cfg.servers.contains(&name) {
+                        eprintln!("Server '{}' already in list.", name);
+                        std::process::exit(1);
+                    }
+                    cfg.servers.push(name.clone());
+                    cfg.save();
+                    println!("Added server '{}'.", name);
                 }
                 ServerCommands::Default { name } => {
                     let mut cfg = Config::load();

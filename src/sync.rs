@@ -267,33 +267,57 @@ impl Sync {
 
         let script_file = "/tmp/st-run.sh";
 
-        // Ensure session exists, then write wrapper script.
-        // PYTHONUNBUFFERED=1 ensures python output isn't buffered.
-        // tee writes to log and pane simultaneously; sentinel appended after.
-        let write_script = format!(
-            "tmux has-session -t {s} 2>/dev/null || tmux new-session -d -s {s}; \
-             cat > {script} << 'STEOF'\n\
-             #!/bin/sh\n\
-             PYTHONUNBUFFERED=1 {cmd} 2>&1 | tee {log}\n\
-             echo {sent} | tee -a {log}\n\
-             STEOF\n\
-             chmod +x {script}",
+        // Ensure tmux session exists
+        let ensure_session = format!(
+            "tmux has-session -t {s} 2>/dev/null || tmux new-session -d -s {s}",
             s = session,
-            script = script_file,
-            cmd = command,
-            log = log_file,
-            sent = sentinel,
         );
         Command::new("ssh")
-            .args([server, &write_script])
+            .args([server, &ensure_session])
             .status()
             .expect("Failed to run ssh");
 
-        // Send-keys targets window 0 specifically — unaffected by other panes/windows
-        Command::new("ssh")
-            .args([server, &format!("tmux send-keys -t {} 'sh {}' Enter", window, script_file)])
-            .status()
-            .expect("Failed to run ssh");
+        // cd is a shell builtin — pipe-based scripts lose the effect.
+        // Send it directly to the tmux pane so the CWD persists for future commands.
+        let is_cd = command.trim_start().starts_with("cd");
+        if is_cd {
+            let send_cd = format!(
+                "tmux send-keys -t {w} '{cmd}; echo {sent} | tee {log}' Enter",
+                w = window,
+                cmd = command.replace('\'', "'\\''"),
+                sent = sentinel,
+                log = log_file,
+            );
+            Command::new("ssh")
+                .args([server, &send_cd])
+                .status()
+                .expect("Failed to run ssh");
+        } else {
+            // Write wrapper script — PYTHONUNBUFFERED=1 ensures python output isn't buffered.
+            // tee writes to log and pane simultaneously; sentinel appended after.
+            let write_script = format!(
+                "cat > {script} << 'STEOF'\n\
+#!/bin/sh\n\
+PYTHONUNBUFFERED=1 {cmd} 2>&1 | tee {log}\n\
+echo {sent} | tee -a {log}\n\
+STEOF\n\
+chmod +x {script}",
+                script = script_file,
+                cmd = command,
+                log = log_file,
+                sent = sentinel,
+            );
+            Command::new("ssh")
+                .args([server, &write_script])
+                .status()
+                .expect("Failed to run ssh");
+
+            // Send-keys targets window 0 specifically — unaffected by other panes/windows
+            Command::new("ssh")
+                .args([server, &format!("tmux send-keys -t {} 'sh {}' Enter", window, script_file)])
+                .status()
+                .expect("Failed to run ssh");
+        }
 
         // Tail log until sentinel
         let mut child = Command::new("ssh")

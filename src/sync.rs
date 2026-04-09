@@ -1,5 +1,6 @@
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 pub struct Sync;
 
@@ -225,9 +226,78 @@ impl Sync {
         }
     }
 
+    pub fn run(server: &str, command: &str) {
+        let sentinel = format!(
+            "__ST_DONE_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        );
+        let log_file = "/tmp/st-run.log";
+        let session = "st";
+
+        let script_file = "/tmp/st-run.sh";
+
+        // Write a wrapper script to the remote over SSH using heredoc.
+        // PYTHONUNBUFFERED=1 ensures python output isn't buffered.
+        // tee writes to log and pane simultaneously; sentinel appended after.
+        let write_script = format!(
+            "tmux has-session -t {s} 2>/dev/null || tmux new-session -d -s {s}; \
+             cat > {script} << 'STEOF'\n\
+             #!/bin/sh\n\
+             PYTHONUNBUFFERED=1 {cmd} 2>&1 | tee {log}\n\
+             echo {sent} | tee -a {log}\n\
+             STEOF\n\
+             chmod +x {script}",
+            s = session,
+            script = script_file,
+            cmd = command,
+            log = log_file,
+            sent = sentinel,
+        );
+        Command::new("ssh")
+            .args([server, &write_script])
+            .status()
+            .expect("Failed to run ssh");
+
+        // Send-keys just runs the script — no quoting issues with the command itself
+        Command::new("ssh")
+            .args([server, &format!("tmux send-keys -t {} 'sh {}' Enter", session, script_file)])
+            .status()
+            .expect("Failed to run ssh");
+
+        // Tail log until sentinel
+        let mut child = Command::new("ssh")
+            .args([server, &format!("tail -f {}", log_file)])
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("Failed to run ssh");
+
+        let stdout = child.stdout.take().unwrap();
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            let line = line.expect("read error");
+            if line.contains(&sentinel) {
+                break;
+            }
+            println!("{}", line);
+        }
+        let _ = child.kill();
+    }
+
     pub fn open_shell(server: &str) {
+        // Ensure tmux session exists, then attach to it
+        let session = "st";
+        Command::new("ssh")
+            .args([server, &format!(
+                "tmux has-session -t {s} 2>/dev/null || tmux new-session -d -s {s}",
+                s = session
+            )])
+            .status()
+            .expect("Failed to run ssh");
         let status = Command::new("ssh")
-            .arg(server)
+            .args(["-t", server, &format!("tmux attach-session -t {}", session)])
             .status()
             .expect("Failed to run ssh");
         if !status.success() {

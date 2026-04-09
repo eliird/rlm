@@ -46,6 +46,10 @@ enum Commands{
         /// Command to run on the remote server in remote_work_dir
         command: Vec<String>,
     },
+    Run {
+        /// Command to run in the persistent remote tmux session
+        command: Vec<String>,
+    },
     Ssh,
     /// Install a Claude Code skill for st
     InitClaude {
@@ -200,6 +204,17 @@ fn main(){
                 println!("Pulling '{}'...", sub);
                 Sync::pull(&local_path, &server, &remote_path, force, &cfg.excludes, cfg.max_file_size_mb);
             }
+        }
+        Commands::Run { command } => {
+            let cfg = Config::load();
+            let server = match &cfg.default_server {
+                Some(s) => s.clone(),
+                None => {
+                    eprintln!("No default server set. Run `servers default <name>` first.");
+                    std::process::exit(1);
+                }
+            };
+            Sync::run(&server, &command.join(" "));
         }
         Commands::Exec { command } => {
             let cfg = Config::load();

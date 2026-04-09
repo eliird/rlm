@@ -22,11 +22,6 @@ impl Claude {
         let skill_path = commands_dir.join("st.md");
         let scope = if global { "user-scoped (global)" } else { "project-scoped (local)" };
 
-        if skill_path.exists() {
-            eprintln!("Skill already exists at {:?}", skill_path);
-            std::process::exit(1);
-        }
-
         let content = Self::skill_content();
         fs::write(&skill_path, content).expect("Failed to write skill file");
         println!("Claude skill installed ({}) at {:?}", scope, skill_path);

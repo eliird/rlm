@@ -263,10 +263,11 @@ impl Sync {
         );
         let log_file = "/tmp/st-run.log";
         let session = "st";
+        let window = "st:0"; // window 0 reserved for st run — unaffected by extra panes/windows
 
         let script_file = "/tmp/st-run.sh";
 
-        // Write a wrapper script to the remote over SSH using heredoc.
+        // Ensure session exists, then write wrapper script.
         // PYTHONUNBUFFERED=1 ensures python output isn't buffered.
         // tee writes to log and pane simultaneously; sentinel appended after.
         let write_script = format!(
@@ -288,9 +289,9 @@ impl Sync {
             .status()
             .expect("Failed to run ssh");
 
-        // Send-keys just runs the script — no quoting issues with the command itself
+        // Send-keys targets window 0 specifically — unaffected by other panes/windows
         Command::new("ssh")
-            .args([server, &format!("tmux send-keys -t {} 'sh {}' Enter", session, script_file)])
+            .args([server, &format!("tmux send-keys -t {} 'sh {}' Enter", window, script_file)])
             .status()
             .expect("Failed to run ssh");
 

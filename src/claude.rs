@@ -79,10 +79,25 @@ Use the Bash tool to run `st` commands directly. Always run `st status` first if
 
 - "push my changes" → run `st push`
 - "pull from server" → run `st pull`
-- "run X on the server" → use `st run X` for env-persistent execution (conda/venv retained), or `st exec X` for a quick one-shot command
+- "run X on the server" → use `st run X` by default
 - "what's my config" → run `st status`
 - "add a submodule" → run `st submodules add <url> <path>`
 - If a command fails due to dirty state or diverged commits, explain what st reported and suggest next steps
+
+## `st run` vs `st exec`
+
+**Always prefer `st run`** for anything on the server. It runs inside a persistent tmux session (window 0) that retains environment state between calls — conda/venv activations, working directory, shell variables all persist.
+
+**Only use `st exec`** for truly stateless one-liners where environment doesn't matter (e.g. `df -h`, `uname -a`).
+
+If the user mentions a conda env or virtualenv, activate it first with `st run conda activate <env>` before running any subsequent commands — it will stay active for all future `st run` calls in that session.
+
+Example:
+```
+st run conda activate myenv
+st run pip show vllm
+st run python train.py
+```
 "#.to_string()
     }
 }

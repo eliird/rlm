@@ -11,7 +11,7 @@ Built for a workflow where Claude Code runs locally but compute lives on a remot
 - Guard against accidentally overwriting uncommitted work in either direction
 - Skills so claude can execute code remotely on the tmux session.
 
-If your flow is purely push-to-server → pull-from-git, `git remote` would be simpler. This tool is for when you want direct server↔local sync alongside your normal git workflow. Also convenient to not have to setup claude related skills and plugins on both local and remote machines.
+If your flow is purely push-to-server → pull-from-git, `git remote` would be simpler. This tool is for when you want direct server↔local sync alongside your normal git workflow. Also convenient to not have to setup claude related skills and plugins on both local and remote machines. Another thing is it keeps the results of what commands claude executed on server in the tmux kernel which is useful for reviewing things later.
 
 ## Installation
 

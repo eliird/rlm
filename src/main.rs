@@ -1,8 +1,10 @@
 mod config;
 mod git;
+mod sync;
 use config::Config;
 use git::Git;
-use clap::{Parser, ValueEnum, Subcommand};
+use sync::Sync;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 struct Cli{
@@ -26,6 +28,23 @@ enum Commands{
         #[command(subcommand)]
         command: SubmoduleCommands,
     },
+    Push {
+        /// Submodule name to push (pushes all if omitted)
+        submodule: Option<String>,
+        #[arg(long)]
+        force: bool,
+    },
+    Pull {
+        /// Submodule name to pull (pulls all if omitted)
+        submodule: Option<String>,
+        #[arg(long)]
+        force: bool,
+    },
+    Exec {
+        /// Command to run on the remote server in remote_work_dir
+        command: Vec<String>,
+    },
+    Ssh,
 }
 
 #[derive(Subcommand)]
@@ -124,6 +143,78 @@ fn main(){
                     println!("Servers saved to config.");
                 }
             }
+        }
+        Commands::Push { submodule, force } => {
+            let cfg = Config::load();
+            let server = match &cfg.default_server {
+                Some(s) => s.clone(),
+                None => {
+                    eprintln!("No default server set. Run `servers default <name>` first.");
+                    std::process::exit(1);
+                }
+            };
+            let repo_path = std::path::PathBuf::from(&cfg.local_repo);
+            let submodules = match submodule {
+                Some(name) => vec![name],
+                None => Git::get_submodules(&repo_path),
+            };
+            if submodules.is_empty() {
+                eprintln!("No submodules found.");
+                std::process::exit(1);
+            }
+            for sub in &submodules {
+                let local_path = repo_path.join(sub);
+                let remote_path = format!("{}/{}", cfg.remote_work_dir, sub);
+                println!("Pushing '{}'...", sub);
+                Sync::push(&local_path, &server, &remote_path, force);
+            }
+        }
+        Commands::Pull { submodule, force } => {
+            let cfg = Config::load();
+            let server = match &cfg.default_server {
+                Some(s) => s.clone(),
+                None => {
+                    eprintln!("No default server set. Run `servers default <name>` first.");
+                    std::process::exit(1);
+                }
+            };
+            let repo_path = std::path::PathBuf::from(&cfg.local_repo);
+            let submodules = match submodule {
+                Some(name) => vec![name],
+                None => Git::get_submodules(&repo_path),
+            };
+            if submodules.is_empty() {
+                eprintln!("No submodules found.");
+                std::process::exit(1);
+            }
+            for sub in &submodules {
+                let local_path = repo_path.join(sub);
+                let remote_path = format!("{}/{}", cfg.remote_work_dir, sub);
+                println!("Pulling '{}'...", sub);
+                Sync::pull(&local_path, &server, &remote_path, force);
+            }
+        }
+        Commands::Exec { command } => {
+            let cfg = Config::load();
+            let server = match &cfg.default_server {
+                Some(s) => s.clone(),
+                None => {
+                    eprintln!("No default server set. Run `servers default <name>` first.");
+                    std::process::exit(1);
+                }
+            };
+            Sync::exec(&server, &cfg.remote_work_dir, &command.join(" "));
+        }
+        Commands::Ssh => {
+            let cfg = Config::load();
+            let server = match &cfg.default_server {
+                Some(s) => s.clone(),
+                None => {
+                    eprintln!("No default server set. Run `servers default <name>` first.");
+                    std::process::exit(1);
+                }
+            };
+            Sync::open_shell(&server);
         }
         Commands::Submodules { command } => {
             let cfg = Config::load();

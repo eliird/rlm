@@ -26,12 +26,12 @@ MAX_STEPS        = 100_000
 WARMUP_FRACTION  = 0.05   # 5% of total steps
 GRAD_CLIP        = 1.0
 LOG_EVERY        = 10
-VAL_BATCHES      = 64       # number of batches to use for validation
+VAL_BATCHES      = 16       # number of batches to use for validation
 
 JEPA_WEIGHT      = 1.0
 RECON_WEIGHT     = 1.0
 
-MAX_SEGMENTS     = 64
+MAX_SEGMENTS     = 20
 MAX_BERT_LEN     = 64
 MAX_GPT_LEN      = 64
 MIN_SEG_TOKENS   = 8
@@ -231,10 +231,10 @@ class GenerationCallback(Callback):
         from embeddings import CausalAttentionMask
 
         _split = re.compile(r'(?<=[.?!])\s+')
+        # Lightning already set the model to eval; no need to call model.eval()
         model  = pl_module.model
         device = pl_module.device
 
-        model.eval()
         print(f"\n{'='*70}")
         print(f"Generation samples — epoch {trainer.current_epoch}  step {trainer.global_step}")
 
@@ -246,9 +246,10 @@ class GenerationCallback(Callback):
                     prompt_segs, max_length=MAX_BERT_LEN, padding="max_length",
                     truncation=True, return_tensors="pt",
                 )
-                ids     = enc["input_ids"].to(device)
-                seg_ids = enc["token_type_ids"].to(device)
-                cls_vectors = model.encoder(ids, seg_ids)[:, 0].unsqueeze(0)  # (1, N, 768)
+                cls_vectors = model.encoder(
+                    enc["input_ids"].to(device),
+                    enc["token_type_ids"].to(device),
+                )[:, 0].unsqueeze(0)  # (1, N, 768)
 
                 print(f"\n  Prompt: {prompt}")
                 for _ in range(self.n_segments):
@@ -257,28 +258,34 @@ class GenerationCallback(Callback):
                     for _ in range(self.max_tokens):
                         T = token_ids.shape[1]
                         decoder_input, _, _ = model.embed(cls_vectors, token_ids)
-                        mask   = CausalAttentionMask.build(k, T, device=device)
+                        mask = CausalAttentionMask.build(k, T, device=device)
                         logits, _ = model.decoder(inputs_embeds=decoder_input, attn_mask=mask)
                         next_logits = logits[0, -1, :] / self.temperature
                         topk_vals, _ = torch.topk(next_logits, self.top_k)
                         next_logits[next_logits < topk_vals[-1]] = float("-inf")
                         next_logits[self.gpt_tok.eos_token_id] = float("-inf")
-                        probs      = F.softmax(next_logits, dim=-1)
-                        next_token = torch.multinomial(probs, num_samples=1).unsqueeze(0)
-                        token_ids  = torch.cat([token_ids, next_token], dim=1)
+                        next_token = torch.multinomial(F.softmax(next_logits, dim=-1), num_samples=1).unsqueeze(0)
+                        token_ids = torch.cat([token_ids, next_token], dim=1)
+                        del decoder_input, logits
 
                     text = self.gpt_tok.decode(token_ids[0, 1:].tolist(), skip_special_tokens=True).strip()
                     print(f"    [{k+1}] {text}")
 
-                    new_cls     = model.encoder(
-                        self.bert_tok([text], max_length=MAX_BERT_LEN, padding="max_length",
-                                      truncation=True, return_tensors="pt")["input_ids"].to(device),
+                    new_ids = self.bert_tok(
+                        [text], max_length=MAX_BERT_LEN, padding="max_length",
+                        truncation=True, return_tensors="pt",
+                    )["input_ids"].to(device)
+                    new_cls = model.encoder(
+                        new_ids,
                         torch.zeros(1, MAX_BERT_LEN, dtype=torch.long, device=device),
                     )[:, 0].unsqueeze(0)
                     cls_vectors = torch.cat([cls_vectors, new_cls], dim=1)
+                    del new_ids, new_cls, token_ids
+
+                del cls_vectors
 
         print(f"{'='*70}\n")
-        model.train()
+        torch.cuda.empty_cache()
 
 
 # ── Lightning DataModule ──────────────────────────────────────────────────────
@@ -325,6 +332,7 @@ class SegmentDataModule(L.LightningDataModule):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    torch.set_float32_matmul_precision("high")
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
     datamodule = SegmentDataModule()
@@ -363,6 +371,8 @@ if __name__ == "__main__":
         devices="auto",
         precision="bf16-mixed",
         default_root_dir=str(CHECKPOINT_DIR),
+        val_check_interval=1000,
+        limit_val_batches=VAL_BATCHES,
     )
 
     lit_model  = HierarchicalLMLit(warmup_steps=warmup_steps)

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
+from transformers import BertTokenizer
 
 
 class BERTEmbedding(nn.Module):
@@ -155,7 +156,6 @@ class BERT(nn.Module):
 
 
 if __name__ == "__main__":
-    from transformers import BertTokenizer
 
     tokenizer = BertTokenizer.from_pretrained("sentence-lm/bert_weights")
     model = BERT.from_pretrained("sentence-lm/bert_weights")

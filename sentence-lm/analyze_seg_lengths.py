@@ -2,6 +2,7 @@ import re
 import numpy as np
 import pandas as pd
 from transformers import BertTokenizer
+from tqdm import tqdm
 
 BERT_DIR  = "sentence-lm/bert_weights"
 DATA_PATH = "sentence-lm/data/train.parquet"
@@ -10,40 +11,55 @@ _PUNCT_BOUNDARY = re.compile(r'(?<=[.?!;:,])\s+')
 MIN_SEG_TOKENS  = 8
 
 
-def split_into_segments(text: str) -> list[str]:
+def split_raw(text: str) -> list[str]:
+    """Split on punctuation boundaries without any tokenizer calls."""
     raw = _PUNCT_BOUNDARY.split(text.strip())
-    raw = [s.strip() for s in raw if s.strip()]
-
-    merged, buffer = [], ""
-    for seg in raw:
-        candidate = (buffer + " " + seg).strip() if buffer else seg
-        if len(tok.tokenize(candidate)) >= MIN_SEG_TOKENS:
-            merged.append(candidate)
-            buffer = ""
-        else:
-            buffer = candidate
-
-    if buffer:
-        if merged:
-            merged[-1] = merged[-1] + " " + buffer
-        else:
-            merged.append(buffer)
-
-    return merged if merged else [text.strip()]
+    return [s.strip() for s in raw if s.strip()]
 
 
 tok = BertTokenizer.from_pretrained(BERT_DIR)
 df  = pd.read_parquet(DATA_PATH)
 print(f"Documents: {len(df)}")
 
+# ── Pass 1: collect all raw candidate segments ────────────────────────────────
+print("Splitting documents...")
+doc_raw_segs = [split_raw(text) for text in tqdm(df["text"])]
+
+# flatten all raw segments for a single batched tokenize call
+flat_segs  = [seg for segs in doc_raw_segs for seg in segs]
+CHUNK = 100_000
+print(f"Tokenizing {len(flat_segs):,} segments in chunks of {CHUNK:,}...")
+flat_lens = []
+for i in tqdm(range(0, len(flat_segs), CHUNK)):
+    flat_lens.extend(tok(flat_segs[i: i + CHUNK], add_special_tokens=False, return_length=True)["length"])
+
+# ── Pass 2: merge short segments using pre-computed lengths ───────────────────
 lengths      = []
 segs_per_doc = []
+ptr = 0
+for raw_segs in doc_raw_segs:
+    n = len(raw_segs)
+    seg_lens = flat_lens[ptr: ptr + n]
+    ptr += n
 
-for text in df["text"]:
-    segs = split_into_segments(text)
-    segs_per_doc.append(len(segs))
-    for seg in segs:
-        lengths.append(len(tok.tokenize(seg)))
+    # greedy merge: accumulate until candidate >= MIN_SEG_TOKENS
+    merged_lengths = []
+    buf_len = 0
+    for l in seg_lens:
+        buf_len += l
+        if buf_len >= MIN_SEG_TOKENS:
+            merged_lengths.append(buf_len)
+            buf_len = 0
+    if buf_len:
+        if merged_lengths:
+            merged_lengths[-1] += buf_len
+        else:
+            merged_lengths.append(buf_len)
+    if not merged_lengths:
+        merged_lengths = [sum(seg_lens)]
+
+    lengths.extend(merged_lengths)
+    segs_per_doc.append(len(merged_lengths))
 
 lengths      = np.array(lengths)
 segs_per_doc = np.array(segs_per_doc)
@@ -62,7 +78,6 @@ print(f"\n── Suggested config ──")
 p95 = int(np.percentile(lengths, 95))
 p99 = int(np.percentile(lengths, 99))
 p95_segs = int(np.percentile(segs_per_doc, 95))
-# round up to nearest multiple of 8 for memory alignment
 def ceil8(x): return ((x + 7) // 8) * 8
 print(f"  MAX_BERT_LEN / MAX_GPT_LEN (p95): {ceil8(p95)}")
 print(f"  MAX_BERT_LEN / MAX_GPT_LEN (p99): {ceil8(p99)}")

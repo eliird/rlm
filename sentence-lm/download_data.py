@@ -16,6 +16,7 @@ from pathlib import Path
 
 from datasets import load_dataset
 from tqdm import tqdm
+import pandas as pd
 
 
 def main(args):
@@ -44,7 +45,6 @@ def main(args):
         if len(rows) >= args.num_docs:
             break
 
-    import pandas as pd
     df = pd.DataFrame(rows)
     df.to_parquet(out_path, index=False)
     print(f"Saved {len(df):,} documents to {out_path}")

@@ -21,6 +21,7 @@ CHECKPOINT_DIR   = Path("sentence-lm/checkpoints")
 BATCH_SIZE       = 64       # per GPU
 LR               = 3e-4
 MAX_STEPS        = 100_000
+WARMUP_FRACTION  = 0.05   # 5% of total steps
 GRAD_CLIP        = 1.0
 LOG_EVERY        = 10
 
@@ -140,8 +141,9 @@ def collate_fn(batch: list[dict]) -> dict:
 # ── Lightning Module ──────────────────────────────────────────────────────────
 class HierarchicalLMLit(L.LightningModule):
 
-    def __init__(self):
+    def __init__(self, warmup_steps: int = 200):
         super().__init__()
+        self.warmup_steps = warmup_steps
         self.model = HierarchicalLM.from_pretrained(BERT_DIR, GPT2_DIR)
 
     def forward(self, batch):
@@ -178,7 +180,15 @@ class HierarchicalLMLit(L.LightningModule):
             ],
             weight_decay=0.01,
         )
-        return optimizer
+        warmup = self.warmup_steps
+        def lr_lambda(step):
+            if step < warmup:
+                return step / max(warmup, 1)
+            progress = (step - warmup) / max(MAX_STEPS - warmup, 1)
+            return 0.5 * (1.0 + torch.cos(torch.tensor(3.14159265 * progress)).item())
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+        return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}
+
 
 
 # ── Lightning DataModule ──────────────────────────────────────────────────────
@@ -228,7 +238,13 @@ if __name__ == "__main__":
         default_root_dir=str(CHECKPOINT_DIR),
     )
 
-    lit_model  = HierarchicalLMLit()
     datamodule = SegmentDataModule()
+    datamodule.setup()
+    steps_per_epoch = len(datamodule.dataset) // BATCH_SIZE
+    warmup_steps = max(1, int(MAX_STEPS * WARMUP_FRACTION))
+    warmup_steps = min(warmup_steps, steps_per_epoch)  # cap at 1 epoch
+    print(f"steps_per_epoch: {steps_per_epoch}  warmup_steps: {warmup_steps}")
+
+    lit_model  = HierarchicalLMLit(warmup_steps=warmup_steps)
 
     trainer.fit(lit_model, datamodule=datamodule)

@@ -2,6 +2,10 @@ import torch
 import torch.nn as nn
 import math
 
+'''
+Heirarchical Embeddings
+'''
+
 
 class RotaryEmbedding(nn.Module):
     """

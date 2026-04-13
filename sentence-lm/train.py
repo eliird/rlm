@@ -1,5 +1,4 @@
 import re
-import sys
 from pathlib import Path
 
 import pandas as pd
@@ -7,35 +6,37 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from transformers import BertTokenizer, GPT2Tokenizer
 
+import lightning as L
+from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.strategies import DDPStrategy
+
 from model import HierarchicalLM
 
 # ── Config ────────────────────────────────────────────────────────────────────
-BERT_DIR        = "sentence-lm/bert_weights"
-GPT2_DIR        = "sentence-lm/gpt2_weights"
-DATA_PATH       = "sentence-lm/data/train.parquet"
-CHECKPOINT_DIR  = Path("sentence-lm/checkpoints")
+BERT_DIR         = "sentence-lm/bert_weights"
+GPT2_DIR         = "sentence-lm/gpt2_weights"
+DATA_PATH        = "sentence-lm/data/train.parquet"
+CHECKPOINT_DIR   = Path("sentence-lm/checkpoints")
 
-BATCH_SIZE      = 8
-LR              = 3e-4
-MAX_ITERS       = 100_000
-GRAD_CLIP       = 1.0
-CHECKPOINT_EVERY = 1000
-LOG_EVERY       = 10
+BATCH_SIZE       = 8          # per GPU
+LR               = 3e-4
+MAX_STEPS        = 100_000
+GRAD_CLIP        = 1.0
+LOG_EVERY        = 10
 
-JEPA_WEIGHT     = 1.0
-RECON_WEIGHT    = 1.0
+JEPA_WEIGHT      = 1.0
+RECON_WEIGHT     = 1.0
 
-MAX_SEGMENTS    = 20
-MAX_BERT_LEN    = 64
-MAX_GPT_LEN     = 64
-MIN_SEG_TOKENS  = 8
+MAX_SEGMENTS     = 20
+MAX_BERT_LEN     = 64
+MAX_GPT_LEN      = 64
+MIN_SEG_TOKENS   = 8
 
 # ── Segmentation ──────────────────────────────────────────────────────────────
 _PUNCT_BOUNDARY = re.compile(r'(?<=[.?!;:,])\s+')
 
 
 def split_into_segments(text: str, tokenizer: BertTokenizer, min_tokens: int = MIN_SEG_TOKENS) -> list[str]:
-    """Split text at pause boundaries; merge chunks shorter than min_tokens."""
     raw = _PUNCT_BOUNDARY.split(text.strip())
     raw = [s.strip() for s in raw if s.strip()]
 
@@ -100,24 +101,23 @@ class SegmentDataset(Dataset):
         )
 
         return {
-            "bert_ids": bert_enc["input_ids"],          # (n_seg, L_bert)
-            "bert_seg_ids": bert_enc["token_type_ids"], # (n_seg, L_bert)
-            "gpt_ids": gpt_enc["input_ids"],            # (n_seg, L_gpt)
-            "n_segments": len(segments),
+            "bert_ids":    bert_enc["input_ids"],           # (n_seg, L_bert)
+            "bert_seg_ids": bert_enc["token_type_ids"],     # (n_seg, L_bert)
+            "gpt_ids":     gpt_enc["input_ids"],            # (n_seg, L_gpt)
+            "n_segments":  len(segments),
         }
 
 
 def collate_fn(batch: list[dict]) -> dict:
-    max_n = max(item["n_segments"] for item in batch)
-    B = len(batch)
+    max_n  = max(item["n_segments"] for item in batch)
+    B      = len(batch)
     L_bert = batch[0]["bert_ids"].shape[-1]
-    L_gpt = batch[0]["gpt_ids"].shape[-1]
+    L_gpt  = batch[0]["gpt_ids"].shape[-1]
 
-    bert_ids    = torch.zeros(B, max_n, L_bert, dtype=torch.long)
+    bert_ids     = torch.zeros(B, max_n, L_bert, dtype=torch.long)
     bert_seg_ids = torch.zeros(B, max_n, L_bert, dtype=torch.long)
-    # GPT padding uses eos token id; targets use -1 as ignore_index
-    gpt_ids     = torch.zeros(B, max_n, L_gpt, dtype=torch.long)
-    n_segs      = torch.tensor([item["n_segments"] for item in batch])
+    gpt_ids      = torch.zeros(B, max_n, L_gpt,  dtype=torch.long)
+    n_segs       = torch.tensor([item["n_segments"] for item in batch])
 
     for i, item in enumerate(batch):
         n = item["n_segments"]
@@ -125,10 +125,8 @@ def collate_fn(batch: list[dict]) -> dict:
         bert_seg_ids[i, :n] = item["bert_seg_ids"]
         gpt_ids[i, :n]      = item["gpt_ids"]
 
-    # Targets: shift right by 1, pad positions = -1 (ignored in CE)
     gpt_targets = torch.full((B, max_n, L_gpt), fill_value=-1, dtype=torch.long)
     gpt_targets[:, :, :-1] = gpt_ids[:, :, 1:]
-    # Padded segment slots have gpt_ids = 0 (eos); their targets stay -1
 
     return {
         "bert_ids":     bert_ids,
@@ -139,97 +137,97 @@ def collate_fn(batch: list[dict]) -> dict:
     }
 
 
-# ── Training ──────────────────────────────────────────────────────────────────
-def train():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Device: {device}")
+# ── Lightning Module ──────────────────────────────────────────────────────────
+class HierarchicalLMLit(L.LightningModule):
 
+    def __init__(self):
+        super().__init__()
+        self.model = HierarchicalLM.from_pretrained(BERT_DIR, GPT2_DIR)
+
+    def forward(self, batch):
+        return self.model(
+            bert_ids=batch["bert_ids"],
+            bert_seg_ids=batch["bert_seg_ids"],
+            gpt_ids=batch["gpt_ids"],
+            gpt_targets=batch["gpt_targets"],
+            n_segments=batch["n_segments"],
+            jepa_weight=JEPA_WEIGHT,
+            recon_weight=RECON_WEIGHT,
+        )
+
+    def training_step(self, batch, batch_idx):
+        loss, jepa_loss, recon_loss = self(batch)
+        self.log("train/loss",  loss,       on_step=True, on_epoch=False, prog_bar=True,  sync_dist=True)
+        self.log("train/jepa",  jepa_loss,  on_step=True, on_epoch=False, prog_bar=False, sync_dist=True)
+        self.log("train/recon", recon_loss, on_step=True, on_epoch=False, prog_bar=False, sync_dist=True)
+        return loss
+
+    def on_after_backward(self):
+        # EMA update after gradients are computed but before optimizer step.
+        # Each rank has identical encoder weights (DDP syncs grads), so each
+        # rank's EMA update is identical — no cross-rank sync needed.
+        self.model.update_ema()
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(
+            [
+                {"params": self.model.encoder.parameters(),             "lr": LR * 0.1},
+                {"params": self.model.decoder.transformer.parameters(), "lr": LR * 0.1},
+                {"params": self.model.embed.parameters(),               "lr": LR},
+                {"params": self.model.jepa_predictor.parameters(),      "lr": LR},
+            ],
+            weight_decay=0.01,
+        )
+        return optimizer
+
+
+# ── Lightning DataModule ──────────────────────────────────────────────────────
+class SegmentDataModule(L.LightningDataModule):
+
+    def __init__(self):
+        super().__init__()
+        self.bert_tokenizer = None
+        self.gpt_tokenizer  = None
+
+    def setup(self, stage=None):
+        self.bert_tokenizer = BertTokenizer.from_pretrained(BERT_DIR)
+        self.gpt_tokenizer  = GPT2Tokenizer.from_pretrained(GPT2_DIR)
+        self.gpt_tokenizer.pad_token = self.gpt_tokenizer.eos_token
+        self.dataset = SegmentDataset(DATA_PATH, self.bert_tokenizer, self.gpt_tokenizer)
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.dataset,
+            batch_size=BATCH_SIZE,
+            shuffle=True,
+            collate_fn=collate_fn,
+            num_workers=4,
+            pin_memory=True,
+        )
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+if __name__ == "__main__":
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
-    bert_tokenizer = BertTokenizer.from_pretrained(BERT_DIR)
-    gpt_tokenizer  = GPT2Tokenizer.from_pretrained(GPT2_DIR)
-    gpt_tokenizer.pad_token = gpt_tokenizer.eos_token
-
-    print("Loading model...")
-    model = HierarchicalLM.from_pretrained(BERT_DIR, GPT2_DIR).to(device)
-    model.train()
-
-    optimizer = torch.optim.AdamW(
-        [
-            {"params": model.encoder.parameters(),              "lr": LR * 0.1},
-            {"params": model.decoder.transformer.parameters(),  "lr": LR * 0.1},
-            {"params": model.embed.parameters(),                "lr": LR},
-            {"params": model.jepa_predictor.parameters(),       "lr": LR},
-        ],
-        weight_decay=0.01,
+    checkpoint_cb = ModelCheckpoint(
+        dirpath=CHECKPOINT_DIR,
+        filename="ckpt_{step:06d}",
+        every_n_train_steps=1000,
+        save_top_k=-1,       # keep all checkpoints
     )
 
-    dataset = SegmentDataset(DATA_PATH, bert_tokenizer, gpt_tokenizer)
-    loader  = DataLoader(
-        dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        collate_fn=collate_fn,
-        num_workers=4,
-        pin_memory=(device == "cuda"),
+    trainer = L.Trainer(
+        max_steps=MAX_STEPS,
+        gradient_clip_val=GRAD_CLIP,
+        log_every_n_steps=LOG_EVERY,
+        callbacks=[checkpoint_cb],
+        strategy=DDPStrategy(find_unused_parameters=False),
+        precision="bf16-mixed",
+        default_root_dir=str(CHECKPOINT_DIR),
     )
 
-    iter_num = 0
-    running_loss = running_jepa = running_recon = 0.0
+    lit_model  = HierarchicalLMLit()
+    datamodule = SegmentDataModule()
 
-    for epoch in range(1000):
-        for batch in loader:
-            if iter_num >= MAX_ITERS:
-                print("Training complete.")
-                return
-
-            batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-
-            loss, jepa_loss, recon_loss = model(
-                bert_ids=batch["bert_ids"],
-                bert_seg_ids=batch["bert_seg_ids"],
-                gpt_ids=batch["gpt_ids"],
-                gpt_targets=batch["gpt_targets"],
-                n_segments=batch["n_segments"],
-                jepa_weight=JEPA_WEIGHT,
-                recon_weight=RECON_WEIGHT,
-            )
-
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
-            optimizer.step()
-            model.update_ema()
-            optimizer.zero_grad(set_to_none=True)
-
-            running_loss  += loss.item()
-            running_jepa  += jepa_loss.item()
-            running_recon += recon_loss.item()
-
-            if iter_num % LOG_EVERY == 0:
-                avg = lambda x: x / LOG_EVERY
-                print(
-                    f"iter {iter_num:6d} | "
-                    f"loss {avg(running_loss):.4f} | "
-                    f"jepa {avg(running_jepa):.4f} | "
-                    f"recon {avg(running_recon):.4f}",
-                    flush=True,
-                )
-                running_loss = running_jepa = running_recon = 0.0
-
-            if iter_num > 0 and iter_num % CHECKPOINT_EVERY == 0:
-                ckpt_path = CHECKPOINT_DIR / f"ckpt_{iter_num:06d}.pt"
-                torch.save(
-                    {
-                        "iter_num": iter_num,
-                        "model_state": model.state_dict(),
-                        "optimizer_state": optimizer.state_dict(),
-                    },
-                    ckpt_path,
-                )
-                print(f"Checkpoint saved: {ckpt_path}")
-
-            iter_num += 1
-
-
-if __name__ == "__main__":
-    train()
+    trainer.fit(lit_model, datamodule=datamodule)

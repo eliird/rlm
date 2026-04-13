@@ -152,8 +152,7 @@ class GPT(nn.Module):
             if pn.endswith('c_proj.weight'):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
 
-        # report number of parameters
-        print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
+        # parameter count reported by HierarchicalLM.from_pretrained when used in that context
 
     def get_num_params(self, non_embedding=True):
         """
@@ -199,6 +198,10 @@ class GPT(nn.Module):
             # if we are given some desired targets also calculate the loss
             logits = self.lm_head(x)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+        elif inputs_embeds is not None:
+            # Hierarchical path: always return full logits so caller can slice token positions
+            logits = self.lm_head(x)
+            loss = None
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
             logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim

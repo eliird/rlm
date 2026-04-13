@@ -53,6 +53,18 @@ class HierarchicalLM(nn.Module):
         for p in model.ema_encoder.parameters():
             p.requires_grad_(False)
 
+        def _count(m):
+            return sum(p.numel() for p in m.parameters())
+
+        print(f"encoder:        {_count(model.encoder)/1e6:.2f}M")
+        print(f"ema_encoder:    {_count(model.ema_encoder)/1e6:.2f}M  (frozen)")
+        print(f"decoder:        {_count(model.decoder)/1e6:.2f}M")
+        print(f"embed:          {_count(model.embed)/1e6:.2f}M")
+        print(f"jepa_predictor: {_count(model.jepa_predictor)/1e6:.2f}M")
+        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total     = sum(p.numel() for p in model.parameters())
+        print(f"total:          {total/1e6:.2f}M  ({trainable/1e6:.2f}M trainable)")
+
         return model
 
     @torch.no_grad()

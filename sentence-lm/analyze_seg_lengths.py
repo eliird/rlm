@@ -1,3 +1,4 @@
+import argparse
 import re
 import numpy as np
 import pandas as pd
@@ -6,6 +7,7 @@ from tqdm import tqdm
 
 BERT_DIR  = "sentence-lm/bert_weights"
 DATA_PATH = "sentence-lm/data/train.parquet"
+N_SAMPLE  = 10_000   # default sample size; use --all for full dataset
 
 _PUNCT_BOUNDARY = re.compile(r'(?<=[.?!;:,])\s+')
 MIN_SEG_TOKENS  = 8
@@ -17,9 +19,21 @@ def split_raw(text: str) -> list[str]:
     return [s.strip() for s in raw if s.strip()]
 
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--sample", type=int, default=N_SAMPLE,
+                    help="Number of documents to sample (default 10k)")
+parser.add_argument("--all", action="store_true",
+                    help="Run on the full dataset")
+args = parser.parse_args()
+
 tok = BertTokenizer.from_pretrained(BERT_DIR)
 df  = pd.read_parquet(DATA_PATH)
 print(f"Documents: {len(df)}")
+
+if not args.all:
+    n = min(args.sample, len(df))
+    df = df.sample(n, random_state=42).reset_index(drop=True)
+    print(f"Sampling {n:,} documents")
 
 # ── Pass 1: collect all raw candidate segments ────────────────────────────────
 print("Splitting documents...")

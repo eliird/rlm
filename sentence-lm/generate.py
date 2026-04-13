@@ -51,7 +51,7 @@ def encode_segments(model, bert_tok, segments, device):
 
 
 @torch.no_grad()
-def decode_segment(model, gpt_tok, cls_prefix, max_tokens, temperature, top_k):
+def decode_segment(model, gpt_tok, cls_prefix, max_tokens, temperature, top_k, stop_at_eos=True):
     """
     Autoregressively decode one segment conditioned on cls_prefix (1, k, 768).
     Returns decoded string.
@@ -77,8 +77,7 @@ def decode_segment(model, gpt_tok, cls_prefix, max_tokens, temperature, top_k):
         probs = F.softmax(next_logits, dim=-1)
         next_token = torch.multinomial(probs, num_samples=1).unsqueeze(0)  # (1, 1)
 
-        # stop at EOS
-        if next_token.item() == gpt_tok.eos_token_id:
+        if stop_at_eos and next_token.item() == gpt_tok.eos_token_id:
             break
 
         token_ids = torch.cat([token_ids, next_token], dim=1)
@@ -90,7 +89,7 @@ def decode_segment(model, gpt_tok, cls_prefix, max_tokens, temperature, top_k):
 
 @torch.no_grad()
 def generate(model, bert_tok, gpt_tok, prompt_text, n_segments, max_tokens,
-             temperature, top_k, use_jepa):
+             temperature, top_k, use_jepa, use_no_eos=False):
     """
     Given a prompt string (one or more sentences), generate n_segments continuations.
     """
@@ -122,7 +121,8 @@ def generate(model, bert_tok, gpt_tok, prompt_text, n_segments, max_tokens,
             decode_cls = cls_vectors
 
         seg_text = decode_segment(
-            model, gpt_tok, decode_cls, max_tokens, temperature, top_k
+            model, gpt_tok, decode_cls, max_tokens, temperature, top_k,
+            stop_at_eos=not use_no_eos,
         )
         generated_segs.append(seg_text)
         print(f"  [{k+1}] {seg_text}")
@@ -147,6 +147,8 @@ def main():
     parser.add_argument("--top_k",     type=int, default=50)
     parser.add_argument("--jepa",      action="store_true",
                         help="Use JEPA predictor to guide next-segment CLS.")
+    parser.add_argument("--no_eos",   action="store_true",
+                        help="Disable early stopping at EOS (useful for debugging undertrained models).")
     args = parser.parse_args()
 
     print(f"Device: {DEVICE}")
@@ -172,6 +174,7 @@ def main():
             temperature=args.temp,
             top_k=args.top_k,
             use_jepa=args.jepa,
+            use_no_eos=args.no_eos,
         )
 
     print("\n" + "=" * 70)

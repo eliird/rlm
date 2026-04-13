@@ -18,7 +18,7 @@ GPT2_DIR         = "sentence-lm/gpt2_weights"
 DATA_PATH        = "sentence-lm/data/train.parquet"
 CHECKPOINT_DIR   = Path("sentence-lm/checkpoints")
 
-BATCH_SIZE       = 8          # per GPU
+BATCH_SIZE       = 64       # per GPU
 LR               = 3e-4
 MAX_STEPS        = 100_000
 GRAD_CLIP        = 1.0
@@ -222,7 +222,8 @@ if __name__ == "__main__":
         gradient_clip_val=GRAD_CLIP,
         log_every_n_steps=LOG_EVERY,
         callbacks=[checkpoint_cb],
-        strategy=DDPStrategy(find_unused_parameters=False),
+        strategy=DDPStrategy(find_unused_parameters=True),
+        devices="auto",
         precision="bf16-mixed",
         default_root_dir=str(CHECKPOINT_DIR),
     )

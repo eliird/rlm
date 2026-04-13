@@ -2,12 +2,12 @@ import re
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, random_split
 from transformers import BertTokenizer, GPT2Tokenizer
 from datasets import load_dataset
 
 import lightning as L
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint, Callback
 from lightning.pytorch.strategies import DDPStrategy
 
 from model import HierarchicalLM
@@ -26,6 +26,7 @@ MAX_STEPS        = 100_000
 WARMUP_FRACTION  = 0.05   # 5% of total steps
 GRAD_CLIP        = 1.0
 LOG_EVERY        = 10
+VAL_BATCHES      = 64       # number of batches to use for validation
 
 JEPA_WEIGHT      = 1.0
 RECON_WEIGHT     = 1.0
@@ -146,7 +147,7 @@ class HierarchicalLMLit(L.LightningModule):
     def __init__(self, warmup_steps: int = 200):
         super().__init__()
         self.warmup_steps = warmup_steps
-        self.model = HierarchicalLM.from_pretrained(BERT_DIR, GPT2_DIR)
+        self.model = torch.compile(HierarchicalLM.from_pretrained(BERT_DIR, GPT2_DIR))
 
     def forward(self, batch):
         return self.model(
@@ -164,6 +165,13 @@ class HierarchicalLMLit(L.LightningModule):
         self.log("train/loss",  loss,       on_step=True, on_epoch=False, prog_bar=True,  sync_dist=True)
         self.log("train/jepa",  jepa_loss,  on_step=True, on_epoch=False, prog_bar=False, sync_dist=True)
         self.log("train/recon", recon_loss, on_step=True, on_epoch=False, prog_bar=False, sync_dist=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        loss, jepa_loss, recon_loss = self(batch)
+        self.log("val/loss",  loss,       on_step=False, on_epoch=True, prog_bar=True,  sync_dist=True)
+        self.log("val/jepa",  jepa_loss,  on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
+        self.log("val/recon", recon_loss, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
         return loss
 
     def on_after_backward(self):
@@ -193,6 +201,86 @@ class HierarchicalLMLit(L.LightningModule):
 
 
 
+# ── Generation callback ───────────────────────────────────────────────────────
+GENERATION_PROMPTS = [
+    "The researchers discovered a new species of deep-sea fish.",
+    "Economic growth slowed in the third quarter as inflation remained high.",
+    "She opened the letter and began to read.",
+    "The algorithm failed to converge after one thousand iterations.",
+]
+
+
+class GenerationCallback(Callback):
+    """Run greedy generation on a few fixed prompts at the end of each epoch."""
+
+    def __init__(self, bert_tokenizer, gpt_tokenizer, n_segments=3, max_tokens=48, temperature=0.8, top_k=50):
+        self.bert_tok    = bert_tokenizer
+        self.gpt_tok     = gpt_tokenizer
+        self.n_segments  = n_segments
+        self.max_tokens  = max_tokens
+        self.temperature = temperature
+        self.top_k       = top_k
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        # only run on rank 0
+        if trainer.global_rank != 0:
+            return
+
+        import re
+        import torch.nn.functional as F
+        from embeddings import CausalAttentionMask
+
+        _split = re.compile(r'(?<=[.?!])\s+')
+        model  = pl_module.model
+        device = pl_module.device
+
+        model.eval()
+        print(f"\n{'='*70}")
+        print(f"Generation samples — epoch {trainer.current_epoch}  step {trainer.global_step}")
+
+        with torch.no_grad():
+            for prompt in GENERATION_PROMPTS:
+                prompt_segs = [s.strip() for s in _split.split(prompt.strip()) if s.strip()] or [prompt.strip()]
+
+                enc = self.bert_tok(
+                    prompt_segs, max_length=MAX_BERT_LEN, padding="max_length",
+                    truncation=True, return_tensors="pt",
+                )
+                ids     = enc["input_ids"].to(device)
+                seg_ids = enc["token_type_ids"].to(device)
+                cls_vectors = model.encoder(ids, seg_ids)[:, 0].unsqueeze(0)  # (1, N, 768)
+
+                print(f"\n  Prompt: {prompt}")
+                for _ in range(self.n_segments):
+                    k = cls_vectors.shape[1]
+                    token_ids = torch.tensor([[self.gpt_tok.bos_token_id]], device=device)
+                    for _ in range(self.max_tokens):
+                        T = token_ids.shape[1]
+                        decoder_input, _, _ = model.embed(cls_vectors, token_ids)
+                        mask   = CausalAttentionMask.build(k, T, device=device)
+                        logits, _ = model.decoder(inputs_embeds=decoder_input, attn_mask=mask)
+                        next_logits = logits[0, -1, :] / self.temperature
+                        topk_vals, _ = torch.topk(next_logits, self.top_k)
+                        next_logits[next_logits < topk_vals[-1]] = float("-inf")
+                        next_logits[self.gpt_tok.eos_token_id] = float("-inf")
+                        probs      = F.softmax(next_logits, dim=-1)
+                        next_token = torch.multinomial(probs, num_samples=1).unsqueeze(0)
+                        token_ids  = torch.cat([token_ids, next_token], dim=1)
+
+                    text = self.gpt_tok.decode(token_ids[0, 1:].tolist(), skip_special_tokens=True).strip()
+                    print(f"    [{k+1}] {text}")
+
+                    new_cls     = model.encoder(
+                        self.bert_tok([text], max_length=MAX_BERT_LEN, padding="max_length",
+                                      truncation=True, return_tensors="pt")["input_ids"].to(device),
+                        torch.zeros(1, MAX_BERT_LEN, dtype=torch.long, device=device),
+                    )[:, 0].unsqueeze(0)
+                    cls_vectors = torch.cat([cls_vectors, new_cls], dim=1)
+
+        print(f"{'='*70}\n")
+        model.train()
+
+
 # ── Lightning DataModule ──────────────────────────────────────────────────────
 class SegmentDataModule(L.LightningDataModule):
 
@@ -205,14 +293,30 @@ class SegmentDataModule(L.LightningDataModule):
         self.bert_tokenizer = BertTokenizer.from_pretrained(BERT_DIR)
         self.gpt_tokenizer  = GPT2Tokenizer.from_pretrained(GPT2_DIR)
         self.gpt_tokenizer.pad_token = self.gpt_tokenizer.eos_token
-        hf_ds = load_dataset(HF_DATASET, name=HF_SUBSET, split="train")
-        self.dataset = SegmentDataset(hf_ds, self.bert_tokenizer, self.gpt_tokenizer)
+        hf_ds    = load_dataset(HF_DATASET, name=HF_SUBSET, split="train")
+        full_ds  = SegmentDataset(hf_ds, self.bert_tokenizer, self.gpt_tokenizer)
+        val_size = VAL_BATCHES * BATCH_SIZE
+        train_size = len(full_ds) - val_size
+        self.train_dataset, self.val_dataset = random_split(
+            full_ds, [train_size, val_size],
+            generator=torch.Generator().manual_seed(42),
+        )
 
     def train_dataloader(self):
         return DataLoader(
-            self.dataset,
+            self.train_dataset,
             batch_size=BATCH_SIZE,
             shuffle=True,
+            collate_fn=collate_fn,
+            num_workers=4,
+            pin_memory=True,
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            self.val_dataset,
+            batch_size=BATCH_SIZE,
+            shuffle=False,
             collate_fn=collate_fn,
             num_workers=4,
             pin_memory=True,
@@ -240,8 +344,13 @@ if __name__ == "__main__":
     checkpoint_cb = ModelCheckpoint(
         dirpath=CHECKPOINT_DIR,
         filename="ckpt_{step:06d}",
-        every_n_train_steps=1000,
+        every_n_train_steps=10_000,
         save_top_k=-1,       # keep all checkpoints
+    )
+
+    gen_cb = GenerationCallback(
+        bert_tokenizer=datamodule.bert_tokenizer,
+        gpt_tokenizer=datamodule.gpt_tokenizer,
     )
 
     trainer = L.Trainer(
@@ -249,7 +358,7 @@ if __name__ == "__main__":
         gradient_clip_val=GRAD_CLIP,
         log_every_n_steps=LOG_EVERY,
         accumulate_grad_batches=accum,
-        callbacks=[checkpoint_cb],
+        callbacks=[checkpoint_cb, gen_cb],
         strategy=DDPStrategy(find_unused_parameters=True),
         devices="auto",
         precision="bf16-mixed",

@@ -25,4 +25,27 @@ Multi-GPU (8x H200):
 torchrun --nproc_per_node=8 sentence-lm/train.py
 ```
 
-> Note: do not run `train.py` from an interactive Python shell — CUDA error 802 (system not yet initialized) will occur. Run as a script only.
+## Analyse segment lengths
+
+```sh
+python sentence-lm/analyze_seg_lengths.py
+```
+
+## Generate
+
+```sh
+# default prompts
+python sentence-lm/generate.py --checkpoint sentence-lm/checkpoints/ckpt_XXXXXX.ckpt
+
+# custom prompt
+python sentence-lm/generate.py --checkpoint sentence-lm/checkpoints/ckpt_XXXXXX.ckpt --prompt "The stock market crashed unexpectedly."
+
+# use JEPA predictor to guide next-segment CLS
+python sentence-lm/generate.py --checkpoint sentence-lm/checkpoints/ckpt_XXXXXX.ckpt --jepa
+```
+
+## Test context sensitivity
+
+```sh
+python sentence-lm/test_context_sensitivity.py --checkpoint sentence-lm/checkpoints/ckpt_XXXXXX.ckpt
+```

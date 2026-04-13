@@ -43,6 +43,9 @@ enum Commands{
         submodule: Option<String>,
         #[arg(long)]
         force: bool,
+        /// Delete files on server that don't exist locally
+        #[arg(long)]
+        delete: bool,
     },
     Pull {
         /// Submodule name to pull (pulls all if omitted)
@@ -163,7 +166,7 @@ fn main(){
                 }
             }
         }
-        Commands::Push { submodule, force } => {
+        Commands::Push { submodule, force, delete } => {
             let cfg = Config::load();
             require_remote_dir(&cfg);
             let server = match &cfg.default_server {
@@ -203,7 +206,7 @@ fn main(){
                 let local_path = repo_path.join(sub);
                 let remote_path = format!("{}/{}", cfg.remote_work_dir, sub);
                 println!("Pushing '{}'...", sub);
-                Sync::push(&local_path, &server, &remote_path, force, &cfg.excludes, cfg.max_file_size_mb);
+                Sync::push(&local_path, &server, &remote_path, force, delete, &cfg.excludes, cfg.max_file_size_mb);
             }
         }
         Commands::Pull { submodule, force } => {

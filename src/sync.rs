@@ -166,16 +166,18 @@ impl Sync {
         }
     }
 
-    fn run_rsync(local_path: &PathBuf, server: &str, remote_path: &str, push: bool, excludes: &[String], max_file_size_mb: u64) {
+    fn run_rsync(local_path: &PathBuf, server: &str, remote_path: &str, push: bool, delete: bool, excludes: &[String], max_file_size_mb: u64) {
         let local = format!("{}/", local_path.to_str().unwrap());
         let remote = format!("{}:{}/", server, remote_path);
         let (src, dst) = if push { (&local, &remote) } else { (&remote, &local) };
         let mut args = vec![
             "-av".to_string(),
             "--filter=:- .gitignore".to_string(),
-            "--delete".to_string(),
             format!("--max-size={}m", max_file_size_mb),
         ];
+        if delete {
+            args.push("--delete".to_string());
+        }
         for ex in excludes {
             args.push(format!("--exclude={}", ex));
         }
@@ -218,7 +220,7 @@ impl Sync {
         }
     }
 
-    pub fn push(local_path: &PathBuf, server: &str, remote_path: &str, force: bool, excludes: &[String], max_file_size_mb: u64) {
+    pub fn push(local_path: &PathBuf, server: &str, remote_path: &str, force: bool, delete: bool, excludes: &[String], max_file_size_mb: u64) {
         if !force && !Self::check_local_clean(local_path) {
             std::process::exit(1);
         }
@@ -228,7 +230,28 @@ impl Sync {
         if !Self::check_commits_for_push(local_path, server, remote_path, force) {
             std::process::exit(1);
         }
-        Self::run_rsync(local_path, server, remote_path, true, excludes, max_file_size_mb);
+        if !delete {
+            // Warn about files on remote that would be deleted if --delete were passed
+            let local = format!("{}/", local_path.to_str().unwrap());
+            let remote = format!("{}:{}/", server, remote_path);
+            let output = Command::new("rsync")
+                .args(["-av", "--dry-run", "--delete", "--filter=:- .gitignore", &local, &remote])
+                .output()
+                .expect("Failed to run rsync");
+            let deletions: Vec<&str> = std::str::from_utf8(&output.stdout)
+                .unwrap_or("")
+                .lines()
+                .filter(|l| l.starts_with("deleting "))
+                .collect();
+            if !deletions.is_empty() {
+                eprintln!("Warning: the following files exist on the server but not locally (skipping deletion):");
+                for d in &deletions {
+                    eprintln!("  {}", &d["deleting ".len()..]);
+                }
+                eprintln!("Re-run with --delete to remove them from the server.");
+            }
+        }
+        Self::run_rsync(local_path, server, remote_path, true, delete, excludes, max_file_size_mb);
     }
 
     pub fn pull(local_path: &PathBuf, server: &str, remote_path: &str, force: bool, excludes: &[String], max_file_size_mb: u64) {
@@ -238,7 +261,7 @@ impl Sync {
         if !Self::check_commits_for_pull(local_path, server, remote_path, force) {
             std::process::exit(1);
         }
-        Self::run_rsync(local_path, server, remote_path, false, excludes, max_file_size_mb);
+        Self::run_rsync(local_path, server, remote_path, false, true, excludes, max_file_size_mb);
     }
 
     pub fn exec(server: &str, remote_path: &str, command: &str) {

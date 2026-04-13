@@ -336,7 +336,7 @@ if __name__ == "__main__":
     print(f"devices: {num_devices}  per-GPU batch: {BATCH_SIZE}  "
           f"grad_accum: {accum}  effective global batch: {effective_batch}")
 
-    steps_per_epoch = len(datamodule.dataset) // effective_batch
+    steps_per_epoch = len(datamodule.train_dataset) // effective_batch
     warmup_steps = max(1, int(MAX_STEPS * WARMUP_FRACTION))
     warmup_steps = min(warmup_steps, steps_per_epoch)  # cap at 1 epoch
     print(f"steps_per_epoch: {steps_per_epoch}  warmup_steps: {warmup_steps}")

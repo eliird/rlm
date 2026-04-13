@@ -1,10 +1,10 @@
 import re
 from pathlib import Path
 
-import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
 from transformers import BertTokenizer, GPT2Tokenizer
+from datasets import load_dataset
 
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -15,7 +15,8 @@ from model import HierarchicalLM
 # ── Config ────────────────────────────────────────────────────────────────────
 BERT_DIR         = "sentence-lm/bert_weights"
 GPT2_DIR         = "sentence-lm/gpt2_weights"
-DATA_PATH        = "sentence-lm/data/train.parquet"
+HF_DATASET       = "HuggingFaceFW/fineweb-edu"
+HF_SUBSET        = "sample-10BT"
 CHECKPOINT_DIR   = Path("sentence-lm/checkpoints")
 
 BATCH_SIZE       = 64       # per GPU
@@ -65,14 +66,14 @@ def split_into_segments(text: str, tokenizer: BertTokenizer, min_tokens: int = M
 class SegmentDataset(Dataset):
     def __init__(
         self,
-        parquet_path: str,
+        hf_dataset,
         bert_tokenizer: BertTokenizer,
         gpt_tokenizer: GPT2Tokenizer,
         max_segments: int = MAX_SEGMENTS,
         max_bert_len: int = MAX_BERT_LEN,
         max_gpt_len: int = MAX_GPT_LEN,
     ):
-        self.df = pd.read_parquet(parquet_path)
+        self.ds = hf_dataset
         self.bert_tok = bert_tokenizer
         self.gpt_tok = gpt_tokenizer
         self.max_segments = max_segments
@@ -80,10 +81,10 @@ class SegmentDataset(Dataset):
         self.max_gpt_len = max_gpt_len
 
     def __len__(self):
-        return len(self.df)
+        return len(self.ds)
 
     def __getitem__(self, idx):
-        text = self.df.iloc[idx]["text"]
+        text = self.ds[idx]["text"]
         segments = split_into_segments(text, self.bert_tok)
         segments = segments[: self.max_segments]
 
@@ -204,7 +205,8 @@ class SegmentDataModule(L.LightningDataModule):
         self.bert_tokenizer = BertTokenizer.from_pretrained(BERT_DIR)
         self.gpt_tokenizer  = GPT2Tokenizer.from_pretrained(GPT2_DIR)
         self.gpt_tokenizer.pad_token = self.gpt_tokenizer.eos_token
-        self.dataset = SegmentDataset(DATA_PATH, self.bert_tokenizer, self.gpt_tokenizer)
+        hf_ds = load_dataset(HF_DATASET, name=HF_SUBSET, split="train")
+        self.dataset = SegmentDataset(hf_ds, self.bert_tokenizer, self.gpt_tokenizer)
 
     def train_dataloader(self):
         return DataLoader(

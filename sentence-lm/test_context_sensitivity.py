@@ -19,8 +19,8 @@ import re
 
 import torch
 import torch.nn.functional as F
-import pandas as pd
 from transformers import BertTokenizer, GPT2Tokenizer
+from datasets import load_dataset
 
 sys.path.insert(0, "sentence-lm")
 from model import HierarchicalLM
@@ -31,7 +31,8 @@ from train import (
     collate_fn,
     BERT_DIR,
     GPT2_DIR,
-    DATA_PATH,
+    HF_DATASET,
+    HF_SUBSET,
     MAX_SEGMENTS,
     MAX_BERT_LEN,
     MAX_GPT_LEN,
@@ -234,7 +235,8 @@ def main():
     gpt_tok  = GPT2Tokenizer.from_pretrained(GPT2_DIR)
     gpt_tok.pad_token = gpt_tok.eos_token
 
-    dataset = SegmentDataset(DATA_PATH, bert_tok, gpt_tok)
+    hf_ds = load_dataset(HF_DATASET, name=HF_SUBSET, split="train")
+    dataset = SegmentDataset(hf_ds, bert_tok, gpt_tok)
     print(f"Dataset: {len(dataset)} documents. Evaluating on {args.n_docs}.")
 
     probe_context_sensitivity(model, dataset, args.n_docs)

@@ -8,7 +8,10 @@ into multiple segments at pause boundaries.
 Downloads a configurable number of documents and saves as parquet.
 
 Usage:
-  python sentence-lm/download_data.py [--num-docs 500000] [--min-length 200]
+  python sentence-lm/download_data.py                      # 500k docs (default)
+  python sentence-lm/download_data.py --num-docs 1000000   # 1M docs
+  python sentence-lm/download_data.py --all                # full dataset (~9.6M docs)
+  python sentence-lm/download_data.py --overwrite          # re-download even if file exists
 """
 
 import argparse
@@ -24,11 +27,14 @@ def main(args):
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "train.parquet"
 
-    if out_path.exists():
-        print(f"Already exists: {out_path}")
+    if out_path.exists() and not args.overwrite:
+        print(f"Already exists: {out_path}  (use --overwrite to re-download)")
         return
 
-    print(f"Streaming FineWeb-Edu (sample-10BT), collecting {args.num_docs:,} docs...")
+    limit = None if args.all else args.num_docs
+    desc = f"Downloading {'all' if args.all else f'{limit:,}'} docs"
+    print(f"Streaming FineWeb-Edu (sample-10BT)... {desc}")
+
     ds = load_dataset(
         "HuggingFaceFW/fineweb-edu",
         name="sample-10BT",
@@ -37,12 +43,12 @@ def main(args):
     )
 
     rows = []
-    for doc in tqdm(ds, total=args.num_docs, desc="Downloading", unit="doc"):
+    for doc in tqdm(ds, total=limit, desc="Downloading", unit="doc"):
         text = doc.get("text", "")
         if len(text) < args.min_length:
             continue
         rows.append({"text": text})
-        if len(rows) >= args.num_docs:
+        if limit is not None and len(rows) >= limit:
             break
 
     df = pd.DataFrame(rows)
@@ -54,8 +60,12 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num-docs", type=int, default=500_000,
-                        help="Number of documents to download")
+                        help="Number of documents to download (default 500k, ignored if --all)")
+    parser.add_argument("--all", action="store_true",
+                        help="Download the entire dataset (~9.6M docs)")
     parser.add_argument("--min-length", type=int, default=200,
                         help="Minimum character length per document")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="Overwrite existing file")
     args = parser.parse_args()
     main(args)

@@ -19,6 +19,7 @@ DATA_PATH        = "sentence-lm/data/train.parquet"
 CHECKPOINT_DIR   = Path("sentence-lm/checkpoints")
 
 BATCH_SIZE       = 64       # per GPU
+GLOBAL_BATCH     = 2048     # target global batch size; grad accum fills the gap
 LR               = 3e-4
 MAX_STEPS        = 100_000
 WARMUP_FRACTION  = 0.05   # 5% of total steps
@@ -28,7 +29,7 @@ LOG_EVERY        = 10
 JEPA_WEIGHT      = 1.0
 RECON_WEIGHT     = 1.0
 
-MAX_SEGMENTS     = 20
+MAX_SEGMENTS     = 64
 MAX_BERT_LEN     = 64
 MAX_GPT_LEN      = 64
 MIN_SEG_TOKENS   = 8
@@ -220,6 +221,20 @@ class SegmentDataModule(L.LightningDataModule):
 if __name__ == "__main__":
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
+    datamodule = SegmentDataModule()
+    datamodule.setup()
+
+    num_devices = torch.cuda.device_count() or 1
+    accum = max(1, GLOBAL_BATCH // (BATCH_SIZE * num_devices))
+    effective_batch = BATCH_SIZE * num_devices * accum
+    print(f"devices: {num_devices}  per-GPU batch: {BATCH_SIZE}  "
+          f"grad_accum: {accum}  effective global batch: {effective_batch}")
+
+    steps_per_epoch = len(datamodule.dataset) // effective_batch
+    warmup_steps = max(1, int(MAX_STEPS * WARMUP_FRACTION))
+    warmup_steps = min(warmup_steps, steps_per_epoch)  # cap at 1 epoch
+    print(f"steps_per_epoch: {steps_per_epoch}  warmup_steps: {warmup_steps}")
+
     checkpoint_cb = ModelCheckpoint(
         dirpath=CHECKPOINT_DIR,
         filename="ckpt_{step:06d}",
@@ -231,19 +246,13 @@ if __name__ == "__main__":
         max_steps=MAX_STEPS,
         gradient_clip_val=GRAD_CLIP,
         log_every_n_steps=LOG_EVERY,
+        accumulate_grad_batches=accum,
         callbacks=[checkpoint_cb],
         strategy=DDPStrategy(find_unused_parameters=True),
         devices="auto",
         precision="bf16-mixed",
         default_root_dir=str(CHECKPOINT_DIR),
     )
-
-    datamodule = SegmentDataModule()
-    datamodule.setup()
-    steps_per_epoch = len(datamodule.dataset) // BATCH_SIZE
-    warmup_steps = max(1, int(MAX_STEPS * WARMUP_FRACTION))
-    warmup_steps = min(warmup_steps, steps_per_epoch)  # cap at 1 epoch
-    print(f"steps_per_epoch: {steps_per_epoch}  warmup_steps: {warmup_steps}")
 
     lit_model  = HierarchicalLMLit(warmup_steps=warmup_steps)
 
